@@ -1147,6 +1147,13 @@ auto CTrustController::Cast(const EntityId target, SpellID spellid) -> bool
 
     auto* PSpell = spell::GetSpell(spellid);
 
+    // XI: Forever Offline: a spell id that is not in spell_list (e.g. castSpell(60000) from a script) has no CSpell: stop here instead
+    // of dereferencing a null PSpell below (access violation about two seconds later).
+    if (PSpell == nullptr)
+    {
+        return false;
+    }
+
     // XI: Forever Offline (job expansion): a song is sung on the singer and reaches the party around it; a rule may name a
     // party member as the one it is for (e.g. "a melee member lacks Minuet"). Without Pianissimo such a song can only be
     // cast on oneself, so it is: before, it was aimed at that member and refused. Songs on enemies are unchanged.
