@@ -171,6 +171,14 @@ function R.cast(player, askedMates, everyone, spellId, spellName, named)
     end
 
     local target = named or player
+
+    -- G2: "all <spell>" for a spell that goes on a person (Sneak, Protect, Haste, Cure, Raise) is ONE cast on that person. Before, every mate
+    -- that could cast it did, so "all protect" gave you Protect three times and three acknowledgements. "all" keeps its meaning for attack
+    -- spells: every mate that can casts at the enemy.
+    if everyone and kind ~= 'enemy' then
+        everyone = false
+    end
+
     if kind ~= 'enemy' and R.taken(player, spellId, target) then
         print(string.format('[squad_requests] %s on %s is taken (a cast is on its way): the repeated line is ignored', spellName, tostring(target:getName())))
         return true
