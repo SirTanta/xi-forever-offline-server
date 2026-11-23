@@ -91,6 +91,17 @@ auto campOf(const CBaseEntity* PTrust, position_t& camp) -> bool
 
 } // namespace
 
+namespace
+{
+// XI: Forever Offline: "Party leader: KO'd and foe HP <= X > Keep fighting" (Gambits ko_hold, Squads H.ko): a squad mate whose master is KO'd, and that the line told to hold
+// the foe (SQUAD_KO_HOLD = a timestamp the line renews every tick it runs), does not let go of it because the master is not fighting. Only a squad mate, only a KO'd master.
+auto koHold(CTrustEntity* PTrust) -> bool
+{
+    const auto* PKoMaster = PTrust->PMaster;
+    return PKoMaster != nullptr && PKoMaster->isDead() && IsSquadMate(PTrust) && PTrust->GetLocalVar("SQUAD_KO_HOLD") >= earth_time::timestamp();
+}
+} // namespace
+
 CTrustController::CTrustController(CCharEntity* PChar, CTrustEntity* PTrust)
 : CMobController(PTrust)
 , m_GambitsContainer(std::make_unique<gambits::CGambitsContainer>(PTrust))
@@ -146,7 +157,7 @@ auto CTrustController::Tick(timer::time_point tick) -> Task<void>
     // engaged lets go once its master is not fighting.
     if (PTrust->GetLocalVar("SQUAD_ID") != 0 && PTrust->GetLocalVar("SQUAD_IDLE") != 0)
     {
-        if (POwner->PAI->IsEngaged() && !PTrust->PMaster->PAI->IsEngaged())
+        if (POwner->PAI->IsEngaged() && !PTrust->PMaster->PAI->IsEngaged() && !koHold(PTrust))
         {
             POwner->PAI->Internal_Disengage();
         }
@@ -200,7 +211,7 @@ auto CTrustController::DoCombatTick(timer::time_point tick) -> Task<void>
             m_CombatEndTime = m_Tick;
         }
     }
-    else if (!PMaster->PAI->IsEngaged())
+    else if (!PMaster->PAI->IsEngaged() && !koHold(PTrust))
     {
         // (!squad attack, 2026-11-22) the player sent the squad at a monster and keeps out of the fight himself:
         // stay on that monster. Without such an order a mate lets go when its master is not fighting, as before.
