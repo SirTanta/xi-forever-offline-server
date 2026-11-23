@@ -184,6 +184,22 @@ void ReleasePet(CBattleEntity* PMaster)
 
 void CTrustEntity::Die()
 {
+    // XI: Forever Offline: a squad mate that is KO'd is not released. She stays a Raisable body in the party (the stock rule for a Raisable mob: the death
+    // state never times out, the body keeps its place in her master's PTrusts and the party list, and a Raise on her is valid: CMobEntity::ValidTarget).
+    // A retail trust takes the stock path below.
+    if (isSquadMate() && PMaster != nullptr && PMaster->objtype == TYPE_PC)
+    {
+        ReleasePet(this);
+        PEnmityContainer->Clear();
+        PAI->ClearStateStack();
+        PAI->Internal_Die(10min);
+        m_Behavior |= xi::Behavior::Raisable;
+        m_OwnerID.clean();
+        updatemask |= UPDATE_HP;
+        CBattleEntity::Die();
+        return;
+    }
+
     ReleasePet(this);
     luautils::OnMobDeath(this, nullptr);
     PEnmityContainer->Clear();
