@@ -91,6 +91,32 @@ inline auto FromSpellData(const uint16_t validTargets, const float range, const 
     return std::nullopt;
 }
 
+// From a job ability's data (CAbility::getValidTarget/getRadius): an ability used on oneself that works as an area effect
+// around the user (the Corsair rolls 8 yalms, Warcry 14, Rampart 14 ...) reaches whoever stands inside the radius. Every other
+// ability (single target, or self only without an area) keeps the inherited reach, as before.
+inline auto FromAbilityData(const uint16_t validTargets, const float radius) -> std::optional<SpellReach>
+{
+    if (validTargets == TargetSelf && radius > 0.0f)
+    {
+        return SpellReach{ true, 0.0f, radius };
+    }
+
+    return std::nullopt;
+}
+
+// Ordinary trusts (not squad mates) keep the inherited 15 yalms for everything except an area effect cast on oneself, which
+// reaches only its radius: Kupipi's Protectra, Qultada's rolls and a bard's songs fire for a member inside the radius
+// and are not wasted on one just outside it.
+inline auto TrustPartyReach(const std::optional<SpellReach>& spell) -> float
+{
+    if (spell.has_value() && spell->selfOnly && spell->radius > 0.0f)
+    {
+        return spell->radius;
+    }
+
+    return InheritedPartyReach;
+}
+
 // The furthest a party member may be from the caster for this rule. spell is empty when the rule is not a plain spell
 // rule (or its spell cannot be known yet); squadMate is false for ordinary trusts.
 inline auto PartyReach(const bool squadMate, const std::optional<SpellReach>& spell, const float casterHitbox, const float memberHitbox) -> float

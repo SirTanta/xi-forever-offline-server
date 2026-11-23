@@ -143,16 +143,20 @@ auto TrustAoeRetail() -> bool
     return settings::get<std::string>("map.TRUST_AOE_RANGE") != "extended";
 }
 
-// XI: Forever Offline (Squad healer range, see gambits_reach.h): the spell a rule made only of spells will cast, when it
-// is known before a target is chosen (a specific spell, or the best of a family), as the reach it gives the rule.
-// Anything else - a job ability, a ranged attack, a spell picked against the target - gives no reach (the inherited 15).
-// A song only counts when the area reach is retail (areaRetail).
+// XI: Forever Offline (Squad healer range, see gambits_reach.h): the spell or ability a rule will use, when it is known
+// before a target is chosen (a specific spell, or the best of a family), as the reach it gives the rule. A rule made only of
+// spells, or only of job abilities, counts; a spell picked against the target, a ranged attack or a mix gives no reach (the
+// inherited 15). Songs and job abilities with an area only count when the area reach is retail (areaRetail).
 auto RuleSpellReach(CTrustEntity* POwner, const Gambit_t& gambit, const bool areaRetail) -> std::optional<reach::SpellReach>
 {
-    const Action_t* first = nullptr;
+    const Action_t* first       = nullptr;
+    bool            allSpells   = true;
+    bool            allAbility  = true;
     for (const auto& action : gambit.actions)
     {
-        if (action.reaction != G_REACTION::MA)
+        allSpells  = allSpells && action.reaction == G_REACTION::MA;
+        allAbility = allAbility && action.reaction == G_REACTION::JA;
+        if (!allSpells && !allAbility)
         {
             return std::nullopt;
         }
@@ -166,6 +170,18 @@ auto RuleSpellReach(CTrustEntity* POwner, const Gambit_t& gambit, const bool are
     if (first == nullptr)
     {
         return std::nullopt;
+    }
+
+    if (allAbility)
+    {
+        // A job ability used on oneself with an area (the Corsair rolls, Warcry ...): its radius is its reach
+        if (!areaRetail || first->select != G_SELECT::SPECIFIC)
+        {
+            return std::nullopt;
+        }
+
+        const auto* PAbility = ability::GetAbility(first->select_arg);
+        return PAbility != nullptr ? reach::FromAbilityData(PAbility->getValidTarget(), static_cast<float>(PAbility->getRadius())) : std::nullopt;
     }
 
     if (POwner->SpellContainer == nullptr)
@@ -324,7 +340,8 @@ auto CGambitsContainer::Tick(timer::time_point tick) -> Task<void>
             continue;
         }
 
-        const auto ruleSpell = squadMate ? RuleSpellReach(POwner, gambit, areaRetail) : std::nullopt;
+        // (other trusts only need the reach under the retail area range; squad mates always had it)
+        const auto ruleSpell = (squadMate || areaRetail) ? RuleSpellReach(POwner, gambit, areaRetail) : std::nullopt;
 
         auto isValidMember = [this, squadMate, &ruleSpell](CBattleEntity* PSettableTarget, CBattleEntity* PPartyTarget)
         {
@@ -335,6 +352,11 @@ auto CGambitsContainer::Tick(timer::time_point tick) -> Task<void>
 
             if (!squadMate)
             {
+                if (ruleSpell.has_value())
+                {
+                    return reach::WithinReach(POwner->loc.p, PPartyTarget->loc.p, reach::TrustPartyReach(ruleSpell)); // (an area effect on oneself: its radius)
+                }
+
                 return distance(POwner->loc.p, PPartyTarget->loc.p) <= 15.0f; // (other trusts: unchanged)
             }
 
