@@ -38,7 +38,10 @@
 //   - a self-only spell with an area (Protectra, Shellra): its radius, the rule CTargetFind::isWithinArea applies; a member
 //     outside it would not be covered, so the rule no longer fires for them
 //   - a self-only spell without an area: the caster only
-// Everything else (other trusts, job abilities, ranged attacks, mixed or target-dependent actions) keeps 15 yalms.
+//   - a song (sung on the singer, it reaches its radius of 10 like Protectra) and, under the retail area range
+//     (map.TRUST_AOE_RANGE), a job ability used on oneself with an area (Corsair rolls, Warcry): the radius
+// Everything else (job abilities without an area, ranged attacks, mixed or target-dependent actions) keeps 15 yalms.
+// Ordinary trusts keep 15 yalms too, except for such an area effect on oneself (TrustPartyReach, retail area range only).
 // The functions are free of engine types so they can be unit tested on their own (src/test/tests/gambits_reach_tests.cpp).
 namespace gambits::reach
 {
@@ -48,8 +51,10 @@ constexpr float TrustCastLimit      = 28.5f; // CMagicState::CanCastSpell: mobs 
 constexpr float TrustCastMargin     = 1.5f;  // room for the target to move during the cast (checked again at the end)
 
 // The two TARGETTYPE flags (entities/battle_entity.h) this file needs; gambits_container.cpp static_asserts they match
-constexpr uint16_t TargetSelf        = 0x0001;
-constexpr uint16_t TargetPlayerParty = 0x0002;
+constexpr uint16_t TargetSelf                  = 0x0001;
+constexpr uint16_t TargetPlayerParty           = 0x0002;
+constexpr uint16_t TargetEnemy                 = 0x0004;
+constexpr uint16_t TargetPlayerPartyPianissimo = 0x0080;
 
 // What a rule's spell says about its reach, read from CSpell before any target is chosen
 struct SpellReach
@@ -61,9 +66,19 @@ struct SpellReach
 
 // From a spell's data (CSpell::getValidTarget/getRange/getRadius). Empty for a spell that is neither cast on the caster
 // only nor on a party member (an enemy spell in a party rule): such a rule keeps the inherited reach.
+//
+// A song (valid targets 129: the singer plus a party member under Pianissimo, never an enemy) is sung on the singer and
+// lands on whoever stands inside its radius (10 yalms), exactly like Protectra: CTrustController::Cast sings it on the
+// caster unless Pianissimo is up. It used to fall through to the inherited 15 yalms, so a rule "a melee member lacks Minuet"
+// kept choosing a member 10 to 15 yalms away that the song cannot reach.
 inline auto FromSpellData(const uint16_t validTargets, const float range, const float radius) -> std::optional<SpellReach>
 {
     if (validTargets == TargetSelf)
+    {
+        return SpellReach{ true, range, radius };
+    }
+
+    if ((validTargets & TargetSelf) != 0 && (validTargets & TargetPlayerPartyPianissimo) != 0 && (validTargets & (TargetPlayerParty | TargetEnemy)) == 0)
     {
         return SpellReach{ true, range, radius };
     }

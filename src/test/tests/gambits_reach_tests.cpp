@@ -57,6 +57,11 @@ const auto Blink     = FromSpellData(1, 0.0f, 0.0f);    // 53
 const auto Dia       = FromSpellData(4, 20.0f, 0.0f);   // 23 (enemy only)
 const auto Raise     = FromSpellData(32, 20.0f, 0.0f);  // 12 (dead members only)
 
+const auto ArmysPaeon     = FromSpellData(129, 20.0f, 10.0f); // 378 (a song: the singer, or a member under Pianissimo; range 20, radius 10)
+const auto ValorMinuet    = FromSpellData(129, 20.0f, 10.0f); // 394
+const auto AdvancingMarch = FromSpellData(129, 20.0f, 10.0f); // 419
+const auto NoSelfSpell = FromSpellData(128, 20.0f, 0.0f);  // (Pianissimo bit without a self target: not a song on the singer)
+
 const std::optional<SpellReach> NoSpell = std::nullopt; // a job ability, ranged attack or mixed rule
 
 // Is a member at this spot a valid target for the rule (caster at the origin)?
@@ -196,4 +201,21 @@ TEST_CASE("gambits reach: the reported Squad healer position (squad_space.lua) i
     }
 
     CHECK_FALSE(Reaches(true, Protectra, tankSeenFrom(opposite))); // ...but Protectra still would not cover the tank
+}
+
+TEST_CASE("gambits reach: a song is sung on the singer and reaches only its radius", "[gambits][reach][songs]")
+{
+    // valid targets 129 = self + Pianissimo target; it used to be neither "self only" nor "a party member" and fell back to 15
+    for (const auto& song : { ArmysPaeon, ValorMinuet, AdvancingMarch })
+    {
+        REQUIRE(song.has_value());
+        CHECK(song->selfOnly);
+        CHECK(song->radius == 10.0f);
+        CHECK(PartyReach(true, song, 0.0f, 0.0f) == 10.0f);
+        CHECK(Reaches(true, song, { 9.9f, 0.0f, 0.0f }));
+        CHECK_FALSE(Reaches(true, song, { 10.1f, 0.0f, 0.0f })); // a melee member 12 yalms away is not a valid target any more
+        CHECK_FALSE(Reaches(true, song, { 14.0f, 0.0f, 0.0f }));
+    }
+
+    CHECK_FALSE(NoSelfSpell.has_value());
 }

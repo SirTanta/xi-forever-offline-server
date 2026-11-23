@@ -23,6 +23,7 @@
 #include "gambits_reach.h"
 
 #include "ability.h"
+#include "common/settings.h"
 #include "ai/states/ability_state.h"
 #include "ai/states/magic_state.h"
 #include "ai/states/mobskill_state.h"
@@ -134,10 +135,19 @@ auto nowSeconds() -> uint32
     return static_cast<uint32>(std::time(nullptr)); // (the epoch Lua's os.time() uses: squad.lua reads and writes these)
 }
 
+// XI: Forever Offline: map.TRUST_AOE_RANGE (settings/default/map.lua). 'retail' (the default) = a party area effect reaches
+// only the members inside its radius, so the party rules below pick only members it can reach. 'extended' = the stock server
+// (trusts and pets are always covered), where every rule keeps the reach it had before.
+auto TrustAoeRetail() -> bool
+{
+    return settings::get<std::string>("map.TRUST_AOE_RANGE") != "extended";
+}
+
 // XI: Forever Offline (Squad healer range, see gambits_reach.h): the spell a rule made only of spells will cast, when it
 // is known before a target is chosen (a specific spell, or the best of a family), as the reach it gives the rule.
 // Anything else - a job ability, a ranged attack, a spell picked against the target - gives no reach (the inherited 15).
-auto RuleSpellReach(CTrustEntity* POwner, const Gambit_t& gambit) -> std::optional<reach::SpellReach>
+// A song only counts when the area reach is retail (areaRetail).
+auto RuleSpellReach(CTrustEntity* POwner, const Gambit_t& gambit, const bool areaRetail) -> std::optional<reach::SpellReach>
 {
     const Action_t* first = nullptr;
     for (const auto& action : gambit.actions)
@@ -153,7 +163,12 @@ auto RuleSpellReach(CTrustEntity* POwner, const Gambit_t& gambit) -> std::option
         }
     }
 
-    if (first == nullptr || POwner->SpellContainer == nullptr)
+    if (first == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    if (POwner->SpellContainer == nullptr)
     {
         return std::nullopt;
     }
@@ -174,10 +189,17 @@ auto RuleSpellReach(CTrustEntity* POwner, const Gambit_t& gambit) -> std::option
         return std::nullopt;
     }
 
+    // (a song fell back to the inherited 15 yalms in the stock server: it keeps that when the area reach is extended)
+    if (!areaRetail && PSpell->getSpellGroup() == SPELLGROUP_SONG)
+    {
+        return std::nullopt;
+    }
+
     return reach::FromSpellData(PSpell->getValidTarget(), PSpell->getRange(), PSpell->getRadius());
 }
 
-static_assert(reach::TargetSelf == TARGET_SELF && reach::TargetPlayerParty == TARGET_PLAYER_PARTY);
+static_assert(reach::TargetSelf == TARGET_SELF && reach::TargetPlayerParty == TARGET_PLAYER_PARTY && reach::TargetEnemy == TARGET_ENEMY &&
+              reach::TargetPlayerPartyPianissimo == TARGET_PLAYER_PARTY_PIANISSIMO);
 
 } // namespace
 
@@ -291,6 +313,9 @@ auto CGambitsContainer::Tick(timer::time_point tick) -> Task<void>
     // XI: Forever Offline (Squad healer range): squad mates' spell rules reach party members as far as the spell does
     const bool squadMate = POwner->GetLocalVar("SQUAD_ID") != 0;
 
+    // XI: Forever Offline: the area reach of party effects (map.TRUST_AOE_RANGE)
+    const bool areaRetail = TrustAoeRetail();
+
     // Didn't WS/MS, go for other Gambits
     for (auto& gambit : gambits)
     {
@@ -299,7 +324,7 @@ auto CGambitsContainer::Tick(timer::time_point tick) -> Task<void>
             continue;
         }
 
-        const auto ruleSpell = squadMate ? RuleSpellReach(POwner, gambit) : std::nullopt;
+        const auto ruleSpell = squadMate ? RuleSpellReach(POwner, gambit, areaRetail) : std::nullopt;
 
         auto isValidMember = [this, squadMate, &ruleSpell](CBattleEntity* PSettableTarget, CBattleEntity* PPartyTarget)
         {
