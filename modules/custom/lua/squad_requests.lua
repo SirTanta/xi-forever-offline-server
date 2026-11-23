@@ -399,6 +399,277 @@ function R.cast(player, askedMates, everyone, spellId, spellName, named, text)
 end
 
 -----------------------------------
+-- G4 (extra): looser words
+-- "sneak please", "i need invis", "can you cure me?", "poppelle sneak", "invis" were not spells to the party chat (the whole line had to be a spell
+-- name, plus "me" or a name), so they did nothing and said nothing, which looks like a broken mate. With the extras on, a line made of a request
+-- word, filler words ("please", "can you", "i need"), and a target is a request. A line with any other word in it ("we should sneak past the
+-- undead", "sneak attack") is conversation and goes to the old chat unchanged. The words are in squad_requests_data.lua.
+-----------------------------------
+local function data()
+    local ok, mod = pcall(require, 'modules/custom/lua/squad_requests_data')
+    if ok and type(mod) == 'table' then
+        return mod
+    end
+
+    return nil
+end
+
+function R.tokens(text)
+    if type(text) ~= 'string' then
+        return {}
+    end
+
+    local lowered = text:lower():gsub("'", ''):gsub('[^%w]+', ' ')
+    local out = {}
+    for word in lowered:gmatch('%S+') do
+        out[#out + 1] = word
+    end
+
+    return out
+end
+
+-- phrase -> { keys = {...}, implicit = bool }, built again when the data module is a new table (a hot reload)
+local function index(d)
+    if R.indexOf == d and R.index ~= nil then
+        return R.index
+    end
+
+    local idx = {}
+    local function add(phrase, entry)
+        local key = table.concat(R.tokens(phrase), ' ')
+        if key ~= '' and idx[key] == nil then
+            idx[key] = entry
+        end
+    end
+
+    for _, key in ipairs(d.ORDER) do
+        local f = d.FAMILIES[key]
+        for _, w in ipairs(f.words or {}) do
+            add(w, { keys = { key } })
+        end
+
+        for _, w in ipairs(f.phrases or {}) do
+            add(w, { keys = { key }, implicit = true })
+        end
+    end
+
+    for word, keys in pairs(d.BUNDLES or {}) do
+        add(word, { keys = keys })
+    end
+
+    R.index, R.indexOf = idx, d
+    return idx
+end
+
+-- env.member(word) -> a party member whose name is that word; env.mate(word) -> a squad mate with that name (both optional)
+-- Returns nil when the line is not a request, else { keys, tiers, me, group, members, asked, implicit }
+function R.parse(d, text, env)
+    env = env or {}
+    local trimmed = tostring(text or ''):match('^%s*(.-)%s*$')
+    local first = trimmed:sub(1, 1)
+    if trimmed == '' or first == '!' or first == '/' then
+        return nil
+    end
+
+    local toks = R.tokens(trimmed)
+    if #toks == 0 or #toks > d.MAX_WORDS then
+        return nil
+    end
+
+    local intent = { keys = {}, tiers = {}, me = false, group = false, members = {}, asked = nil, implicit = true }
+    local used = {}
+    if #toks > 1 and env.mate ~= nil then -- a mate's name first: only she is asked
+        local mate = env.mate(toks[1])
+        if mate ~= nil then
+            intent.asked, used[1] = mate, true
+        end
+    end
+
+    local idx = index(d)
+    local i = 1
+    while i <= #toks do
+        local took = false
+        if not used[i] then
+            for len = math.min(3, #toks - i + 1), 1, -1 do
+                local free = true
+                for j = i, i + len - 1 do
+                    if used[j] then
+                        free = false
+                    end
+                end
+
+                local entry = free and idx[table.concat(toks, ' ', i, i + len - 1)] or nil
+                if entry ~= nil then
+                    for j = i, i + len - 1 do
+                        used[j] = true
+                    end
+
+                    i = i + len
+                    for _, key in ipairs(entry.keys) do
+                        local seen = false
+                        for _, k in ipairs(intent.keys) do
+                            seen = seen or k == key
+                        end
+
+                        if not seen then
+                            intent.keys[#intent.keys + 1] = key
+                        end
+                    end
+
+                    if not entry.implicit then
+                        intent.implicit = false
+                    end
+
+                    -- a tier word right after a tiered family: "cure iv", "raise 2"
+                    local fam = #entry.keys == 1 and d.FAMILIES[entry.keys[1]] or nil
+                    if fam ~= nil and #fam.spells > 1 and toks[i] ~= nil and not used[i] and d.TIER[toks[i]] ~= nil and d.TIER[toks[i]] <= #fam.spells then
+                        intent.tiers[entry.keys[1]], used[i] = d.TIER[toks[i]], true
+                        i = i + 1
+                    end
+
+                    took = true
+                    break
+                end
+            end
+        end
+
+        if not took then
+            i = i + 1
+        end
+    end
+
+    if #intent.keys == 0 then
+        return nil
+    end
+
+    -- who gets it, and the fillers; any other word makes the line conversation
+    for k, w in ipairs(toks) do
+        if not used[k] then
+            if d.ME[w] then
+                intent.me = true
+            elseif d.GROUP[w] then
+                intent.group = true
+            elseif env.member ~= nil and env.member(w) ~= nil then
+                intent.members[#intent.members + 1] = env.member(w)
+            elseif not d.FILLER[w] then
+                return nil
+            end
+        end
+    end
+
+    if not intent.me and not intent.group and #intent.members == 0 then
+        intent.me = true
+    end
+
+    return intent
+end
+
+local function nameTokens(entity)
+    local ok, name = pcall(function()
+        return entity:getPacketName()
+    end)
+
+    if not ok or name == nil or name == '' then
+        ok, name = pcall(function()
+            return entity:getName()
+        end)
+    end
+
+    return table.concat(R.tokens(ok and name or ''), ' ')
+end
+
+local function party(player)
+    local ok, list = pcall(function()
+        return player:getPartyWithTrusts()
+    end)
+
+    local out = {}
+    for _, member in pairs(ok and list or {}) do
+        out[#out + 1] = member
+    end
+
+    return out
+end
+
+local function spellIdOf(name)
+    local id = type(SquadSpellIdByName) == 'function' and SquadSpellIdByName(name:lower()) or nil
+    if id == nil and xi.magic ~= nil and xi.magic.spell ~= nil then
+        id = xi.magic.spell[name:upper()]
+    end
+
+    return id
+end
+
+-- squad_logic.lua asks first, when the extras are on: true = the line was a request and is done
+function R.pre(player, text, hadAutoTranslate)
+    if not R.more(player) then
+        return false
+    end
+
+    local d = data()
+    local logic = rawget(_G, 'SQUAD_LOGIC')
+    if d == nil or logic == nil or logic.mates == nil then
+        return false
+    end
+
+    local mates = logic.mates(player)
+    if #mates == 0 then
+        return false
+    end
+
+    local everyone = party(player)
+    local intent = R.parse(d, text, {
+        member = function(word)
+            for _, member in ipairs(everyone) do
+                if nameTokens(member) == word then
+                    return member
+                end
+            end
+        end,
+        mate = function(word)
+            for _, mate in ipairs(mates) do
+                if nameTokens(mate) == word then
+                    return mate
+                end
+            end
+        end,
+    })
+
+    if intent == nil or intent.group then
+        return false
+    end
+
+    return R.run(player, mates, intent, text, d)
+end
+
+-- the units of a request (one per family and person) go through the same asking as a spell typed in full
+function R.run(player, mates, intent, text, d)
+    local asked = intent.asked ~= nil and { intent.asked } or mates
+    local handled = false
+    for _, key in ipairs(intent.keys) do
+        local fam = d.FAMILIES[key]
+        local targets = {}
+        if intent.me then
+            targets[#targets + 1] = player
+        end
+
+        for _, member in ipairs(intent.members) do
+            targets[#targets + 1] = member
+        end
+
+        local name = fam.spells[intent.tiers[key] or 1]
+        local id = name ~= nil and spellIdOf(name) or nil
+        if id ~= nil then
+            for _, target in ipairs(targets) do
+                handled = R.cast(player, asked, false, id, name:lower(), target ~= player and target or nil, text) or handled
+            end
+        end
+    end
+
+    return handled
+end
+
+-----------------------------------
 -- !sqreq
 -----------------------------------
 local function tell(player, text)

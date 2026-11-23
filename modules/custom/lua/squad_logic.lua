@@ -155,6 +155,17 @@ end
 -- Typing a spell name in party chat (optionally "all" or a squad mate's name first) makes squad mates cast it.
 -- text is already decoded (auto-translate bytes turned into words); the chat message itself is never blocked.
 function L.onChat(player, text, hadAutoTranslate)
+    -- (v0.3.3) squad_requests.lua reads the line first when its extras are on (!sqreq more on): looser words, groups, the best spell; true = done
+    local req = rawget(_G, 'SQUAD_REQ')
+    if req ~= nil and req.pre ~= nil then
+        local ok, handled = pcall(req.pre, player, text, hadAutoTranslate)
+        if ok and handled then
+            return
+        elseif not ok then
+            print('[squad_logic] squad_requests failed: ' .. tostring(handled))
+        end
+    end
+
     local words = L.words(L.clean(text))
     if #words == 0 or #words > L.MAX_WORDS then
         return
