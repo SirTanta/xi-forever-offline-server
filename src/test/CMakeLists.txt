@@ -67,6 +67,7 @@ xi_add_executable(xi_test testserver.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/zones/settings_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/entity_list_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fishing_tests.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/gambits_backoff_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/gambits_reach_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/huffman_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/item_container_tests.cpp

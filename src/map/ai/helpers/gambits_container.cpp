@@ -292,6 +292,7 @@ void CGambitsContainer::RemoveAllGambits()
 {
     gambits.clear();
     m_timerConditionLastTrigger.clear();
+    m_AreaGuard.Clear();
 }
 
 auto CGambitsContainer::Tick(timer::time_point tick) -> Task<void>
@@ -329,8 +330,9 @@ auto CGambitsContainer::Tick(timer::time_point tick) -> Task<void>
     // XI: Forever Offline (Squad healer range): squad mates' spell rules reach party members as far as the spell does
     const bool squadMate = POwner->GetLocalVar("SQUAD_ID") != 0;
 
-    // XI: Forever Offline: the area reach of party effects (map.TRUST_AOE_RANGE)
-    const bool areaRetail = TrustAoeRetail();
+    // XI: Forever Offline: the area reach of party effects (map.TRUST_AOE_RANGE) and the clock the rest of a rule counts in
+    const bool    areaRetail = TrustAoeRetail();
+    const int64_t nowMs      = std::chrono::duration_cast<std::chrono::milliseconds>(tick.time_since_epoch()).count();
 
     // Didn't WS/MS, go for other Gambits
     for (auto& gambit : gambits)
@@ -343,9 +345,19 @@ auto CGambitsContainer::Tick(timer::time_point tick) -> Task<void>
         // (other trusts only need the reach under the retail area range; squad mates always had it)
         const auto ruleSpell = (squadMate || areaRetail) ? RuleSpellReach(POwner, gambit, areaRetail) : std::nullopt;
 
-        auto isValidMember = [this, squadMate, &ruleSpell](CBattleEntity* PSettableTarget, CBattleEntity* PPartyTarget)
+        // XI: Forever Offline: a rule that spreads an area effect from its caster (Protectra, a song, a roll) and keeps acting on
+        // a member the area does not reach rests for that member (gambits_backoff.h). Only under the retail area range:
+        // the stock server's trusts are always covered, so such a rule always converges there.
+        const bool areaRule = areaRetail && ruleSpell.has_value() && ruleSpell->selfOnly && ruleSpell->radius > 0.0f;
+
+        auto isValidMember = [this, squadMate, areaRule, nowMs, &ruleSpell, &gambit](CBattleEntity* PSettableTarget, CBattleEntity* PPartyTarget)
         {
             if (PSettableTarget || !PPartyTarget->isAlive() || POwner->loc.zone != PPartyTarget->loc.zone)
+            {
+                return false;
+            }
+
+            if (areaRule && m_AreaGuard.Blocked(gambit.identifier, PPartyTarget->id, nowMs))
             {
                 return false;
             }
@@ -1230,6 +1242,12 @@ auto CGambitsContainer::Tick(timer::time_point tick) -> Task<void>
                     executedAnyAction = true;
                 }
             }
+        }
+
+        // XI: Forever Offline: count what an area rule did to this member (see areaRule above)
+        if (executedAnyAction && areaRule && target != nullptr)
+        {
+            m_AreaGuard.Record(gambit.identifier, target->id, nowMs);
         }
 
         // If we executed any action and the gambit has a retry_delay, set last_used
