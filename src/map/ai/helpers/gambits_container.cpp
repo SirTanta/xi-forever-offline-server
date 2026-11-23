@@ -322,7 +322,8 @@ auto CGambitsContainer::Tick(timer::time_point tick) -> Task<void>
 
     // Deal with TP skills before any gambits
     // TODO: Should this be its own special gambit?
-    if (POwner->health.tp >= 1000 && TryTrustSkill())
+    // XI: Forever Offline: a script can hold the stock weapon skills (trust_hold.h); the gambits below still run
+    if (POwner->health.tp >= 1000 && !controller->ScriptHolds(trust_hold::HoldWeaponSkill) && TryTrustSkill())
     {
         co_return;
     }
