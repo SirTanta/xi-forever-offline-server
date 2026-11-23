@@ -2321,6 +2321,30 @@ local function spellRequest(player, text)
     end
 
     local spellName = table.concat(words, ' ', first, last)
+
+    -- (v0.3.3, G9) a Raise goes on someone who is knocked out. "raise" with nobody named means the first fallen member of your party; a standing
+    -- target is no Raise. Before the bot said "sure, raise coming" and cast it at you standing there.
+    local kind = type(SquadSpellKind) == 'function' and SquadSpellKind(spellId) or ''
+    if kind == 'dead' and squad ~= nil and squad.requestsOn ~= nil and squad.requestsOn(player) then
+        if target == player and player:isAlive() then
+            for _, member in pairs(player:getParty() or {}) do
+                if target == player and member:getObjType() == xi.objType.PC and member:isDead() and member:getZoneID() == player:getZoneID() then
+                    target = member
+                end
+            end
+        end
+
+        if target:isAlive() then
+            if asked then
+                asked:timer(math.random(800, 1600), function(b)
+                    chat(b, 4, target:getID() == player:getID() and 'you are standing, nobody needs a raise' or (target:getName() .. ' is standing'))
+                end)
+            end
+
+            return true
+        end
+    end
+
     local caster, why = nil, nil
     for _, bot in ipairs(asked and { asked } or bots) do
         local ok, reason = requestCanCast(bot, spellId)
