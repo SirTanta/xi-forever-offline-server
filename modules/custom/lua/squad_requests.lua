@@ -128,6 +128,10 @@ R.LINES.standing = {
 R.LINES.refuse = {
     '{why}',
 }
+R.LINES.fed = {
+    'Nobody is hungry, everyone has eaten.',
+    'We are fed, nothing more to eat right now.',
+}
 R.LINES.failed = {
     'That {spell} did not land.',
     '{spell} fizzled, it did not take. Ask again.',
@@ -990,11 +994,45 @@ local function step(req)
     finish(req)
 end
 
+-----------------------------------
+-- G14 (extra): "feed us" has a path
+-- "food", "eat", "feed us" did nothing: the mates ate by themselves and by !squad food, but no chat line asked. With the extras on the mates eat now,
+-- by the same rules as every combat tick (a stopped mate does not, a level under 11 does not, one that is eating already does not), each in its
+-- own voice; when nobody could, one mate says so.
+-----------------------------------
+function R.feed(player, mates, intent, text)
+    local eat = xi.squad.eatNow
+    if type(eat) ~= 'function' then
+        return false
+    end
+
+    local who = intent.asked ~= nil and { intent.asked } or mates
+    local ate = 0
+    for _, mate in ipairs(who) do
+        local before = mate:getLocalVar('SQUAD_FOOD_ID')
+        pcall(eat, mate)
+        if before == 0 and mate:getLocalVar('SQUAD_FOOD_ID') ~= 0 then
+            ate = ate + 1
+        end
+    end
+
+    R.markLine(player, text)
+    if ate == 0 then
+        say(player, who[1], 'fed', {})
+    end
+
+    return true
+end
+
 -- the units of a request (one per family and person) are asked together; true when there was something to do
 function R.run(player, mates, intent, text, d)
     local req = { player = player, asked = intent.asked ~= nil and { intent.asked } or mates, units = {}, text = text, retries = 0, acked = false, d = d }
     for _, key in ipairs(intent.keys) do
         local fam = d.FAMILIES[key]
+        if fam.kind == 'food' then
+            return R.feed(player, mates, intent, text)
+        end
+
         local targets = {}
         local function add(entity)
             for _, t in ipairs(targets) do

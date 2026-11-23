@@ -57,7 +57,7 @@ local BUFF_ROLES = { 5, 3 } -- RDM, WHM
 D.ORDER = {
     'sneak', 'invisible', 'deodorize', 'raise', 'haste', 'refresh', 'protect', 'shell', 'blink', 'stoneskin', 'phalanx', 'regen', 'aquaveil', 'cure',
     'poisona', 'paralyna', 'blindna', 'silena', 'stona', 'viruna', 'cursna', 'erase', 'teleport_holla', 'teleport_dem', 'teleport_mea',
-    'teleport_yhoat', 'teleport_altep', 'teleport_vahzl', 'warp', 'escape', 'reraise',
+    'teleport_yhoat', 'teleport_altep', 'teleport_vahzl', 'warp', 'escape', 'reraise', 'food',
 }
 
 D.FAMILIES = {
@@ -133,6 +133,8 @@ D.FAMILIES = {
     -- Warp takes only the caster, so it is asked as Warp II (it takes the party member it is cast on)
     warp = { name = 'Warp', spells = { 'WARP_II' }, kind = 'target', scope = 'pc', roles = { 4, 5, 20 }, words = { 'warp', 'warp home', 'go home' } },
     escape = { name = 'Escape', kind = 'caster', spells = {}, roles = {}, words = { 'escape' }, refuse = 'Escape only takes the caster. Teleport or Warp II can move us.' },
+    -- not a spell: the squad mates eat now (the food rules of squad.lua decide what and whether)
+    food = { name = 'Food', kind = 'food', spells = {}, roles = {}, words = { 'food', 'eat', 'feed', 'snack', 'meal', 'lunch', 'dinner', 'chow' } },
     reraise = { name = 'Reraise', kind = 'caster', spells = {}, roles = {}, words = { 'reraise' }, refuse = 'Reraise only lands on the caster, I cannot put it on you.' },
 }
 

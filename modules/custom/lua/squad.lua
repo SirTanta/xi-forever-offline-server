@@ -552,6 +552,11 @@ local function eatIfNeeded(mob)
     end
 end
 
+-- (v0.3.3, G14) "feed us" in party chat (squad_requests.lua): let a mate eat now if it is not eating, by the same rules as every combat tick
+xi = xi or {}
+xi.squad = xi.squad or {}
+xi.squad.eatNow = eatIfNeeded
+
 -- WAR MNK WHM BLM RDM THF (job ids 1-6) are available from the start. The other jobs are advanced jobs and
 -- only work for squad mates once your character has unlocked them (like the job unlock quests in the game).
 local STARTER_JOB_MAX = 6
