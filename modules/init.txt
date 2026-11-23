@@ -81,6 +81,8 @@ custom/lua/squad.lua
 custom/lua/squad_logic.lua
 # Job ability rules for party chat commands (thin squad.cpp step 2: the rules are squad_ability_rules.lua, called from this file)
 custom/lua/sq_logic.lua
+# Fixes for the party chat requests (one answer, no double casts, honest failures, ...). Each is switched off by !sqreq off
+custom/lua/squad_requests.lua
 custom/lua/squad_space.lua
 custom/lua/squad_chain.lua
 # Gambits v2: the in-game Squad Rule Set editor's server side (!gsq, GambitsV2 addon); needs custom/lua/squad.lua above

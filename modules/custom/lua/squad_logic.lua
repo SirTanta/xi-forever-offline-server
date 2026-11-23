@@ -92,9 +92,11 @@ end
 -- the squad mates that are out and alive
 function L.mates(player)
     local out = {}
+    local req = rawget(_G, 'SQUAD_REQ') -- squad_requests.lua (v0.3.3 fixes); absent or off: every mate that is out and alive is asked
     for _, member in pairs(player:getPartyWithTrusts()) do
         if member:getObjType() == xi.objType.TRUST and member:getLocalVar('SQUAD_ID') > 0 and member:isAlive()
-            and (xi.squad.mine == nil or xi.squad.mine(player, member)) then
+            and (xi.squad.mine == nil or xi.squad.mine(player, member))
+            and (req == nil or req.mayAnswer == nil or req.mayAnswer(player, member)) then
             out[#out + 1] = member
         end
     end
