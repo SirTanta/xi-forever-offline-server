@@ -109,6 +109,11 @@ R.LINES.selfonly = {
     'I cannot cast {spell} on you, it only takes the caster.',
 }
 
+R.LINES.noraise = {
+    'Nobody is down, there is nobody to raise.',
+    'You are standing and so is everyone else, no Raise needed.',
+}
+
 -- 'cure_iv' -> 'Cure IV'
 local function pretty(name)
     local text = tostring(name):gsub('_', ' ')
@@ -196,6 +201,22 @@ function R.claim(player, spellId, target)
     mine[claimKey(spellId, target)] = now() + castSeconds(spellId) + R.CLAIM_PAD
 end
 
+-- G9: the first person of your party who is knocked out, in the same zone (a squad mate cannot be raised: it is called again)
+local function firstFallen(player)
+    local ok, party = pcall(function()
+        return player:getPartyWithTrusts()
+    end)
+
+    for _, member in pairs(ok and party or {}) do
+        local isPlayer = member:getObjType() == xi.objType.PC
+        if isPlayer and member:isDead() and member:getZoneID() == player:getZoneID() then
+            return member
+        end
+    end
+
+    return nil
+end
+
 -- squad_logic.lua hands a spell request over: the mates it asks (in order), "all", the spell, the named target (or nil = you).
 -- Returns true when the request was answered here, false to let squad_logic.lua run the old loop.
 function R.cast(player, askedMates, everyone, spellId, spellName, named)
@@ -206,6 +227,16 @@ function R.cast(player, askedMates, everyone, spellId, spellName, named)
     local kind = kindOf(spellId)
     if kind == '' then
         return false
+    end
+
+    -- G9: Raise goes on someone who is knocked out and on nobody else. "raise" with nobody named means the person who is down: you, else the first
+    -- fallen member of the party. Before, "raise" while you stood and a friend lay dead was "nothing to cast on", and nobody was told why.
+    if kind == 'dead' and named == nil and not player:isDead() then
+        named = firstFallen(player)
+        if named == nil then
+            say(player, askedMates[1], 'noraise', {})
+            return true
+        end
     end
 
     local target = named or player
