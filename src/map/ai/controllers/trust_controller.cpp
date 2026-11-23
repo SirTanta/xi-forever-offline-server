@@ -53,7 +53,7 @@ enum TRUST_MOVEMENT_TYPE : int8
     //     :     mob:setMobMod(xi.mobMod.TRUST_DISTANCE, 20)
     //     : Will set the combat distance the trust tries to stick to to 20'
     // NOTE: If a Trust doesn't immediately sprint to a certain distance at the start of battle, it's probably NO_MOVE or MELEE.
-    NO_MOVE    = -1, // Will stand still providing they're within casting distance of their master and target when the fight starts. Otherwise will reposition to be within 9.0' of both
+    NO_MOVE    = -1, // Will stand still providing they're within casting distance of their master and target when the fight starts. Otherwise will reposition to be within 9.0' of the target (the master is not considered)
     NON_COMBAT = -2, // Will follow the master if first trust in party and will follow the trust in front if lower in the list.
     MELEE      = 0,  // Default: will continually reposition to stay within melee range of the target
     MID_RANGE  = 6,  // Will path at the start of battle to 6' away from the target, and try to stay at that distance
