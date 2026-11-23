@@ -5535,7 +5535,8 @@ auto CLuaBaseEntity::canEquipItem(uint16 itemID, const sol::object& chkLevel) ->
     {
         return false;
     }
-    if (checkLevel && (PItem->getReqLvl() > PChar->GetMLevel()))
+    // XI: Forever Offline (gear sync): an item above map.GEAR_SYNC_LEVEL counts as that level
+    if (checkLevel && (itemutils::effectiveReqLevel(PChar, PItem) > PChar->GetMLevel()))
     {
         return false;
     }
@@ -15194,10 +15195,11 @@ auto CLuaBaseEntity::getGearModFromSlot(uint8 slot, xi::Mod modId) -> int16
     auto*           PChar = static_cast<CCharEntity*>(m_PBaseEntity);
     CItemEquipment* PItem = PChar->getEquip(static_cast<SLOTTYPE>(slot));
 
-    // TODO: support gear scaling
-    if (PItem && PItem->getReqLvl() <= PChar->GetMLevel())
+    // XI: Forever Offline (gear sync): the item counts as the sync level when it is above map.GEAR_SYNC_LEVEL, and its
+    // mod is scaled by the sync rule. With the setting at 0 this is the item's own mod, as before.
+    if (PItem && itemutils::effectiveReqLevel(PChar, PItem) <= PChar->GetMLevel())
     {
-        return PItem->getModifier(modId);
+        return static_cast<int16>(battleutils::GetSyncedItemModifier(PChar, PItem, modId));
     }
 
     return 0;
@@ -15649,7 +15651,7 @@ auto CLuaBaseEntity::getILvlMacc() -> uint16
 
     if (auto* weapon = dynamic_cast<CItemWeapon*>(PBattle->m_Weapons[SLOT_MAIN]))
     {
-        return weapon->getILvlMacc();
+        return battleutils::GetSyncedILvlBonus(PBattle, weapon, weapon->getILvlMacc());
     }
 
     return 0;
@@ -15673,7 +15675,7 @@ auto CLuaBaseEntity::getILvlSkill() -> uint16
 
     if (auto* weapon = dynamic_cast<CItemWeapon*>(PBattle->m_Weapons[SLOT_MAIN]))
     {
-        return weapon->getILvlSkill();
+        return battleutils::GetSyncedILvlBonus(PBattle, weapon, weapon->getILvlSkill());
     }
 
     return 0;
@@ -15697,7 +15699,7 @@ auto CLuaBaseEntity::getILvlParry() -> uint16
 
     if (auto* weapon = dynamic_cast<CItemWeapon*>(PBattle->m_Weapons[SLOT_MAIN]))
     {
-        return weapon->getILvlParry();
+        return battleutils::GetSyncedILvlBonus(PBattle, weapon, weapon->getILvlParry());
     }
 
     return 0;
@@ -15920,7 +15922,8 @@ auto CLuaBaseEntity::getAmmoDmg() -> uint16
         return 0;
     }
 
-    return weapon->getDamage();
+    // XI: Forever Offline (gear sync): the stock damage when map.GEAR_SYNC_LEVEL is 0
+    return battleutils::GetSyncedWeaponDamage(PBattle, weapon);
 }
 
 /************************************************************************

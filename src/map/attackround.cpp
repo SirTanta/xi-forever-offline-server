@@ -25,6 +25,7 @@
 #include "items/transactions/item_claim.h"
 #include "packets/s2c/0x01d_item_same.h"
 #include "status_effect_container.h"
+#include "utils/itemutils.h"
 
 /************************************************************************
  *                                                                        *
@@ -242,7 +243,7 @@ void CAttackRound::CreateAttacks(CItemWeapon* PWeapon, PHYSICAL_ATTACK_DIRECTION
     const bool isPC  = PChar != nullptr;
 
     // Checking the players weapon hit count
-    if (PWeapon->getReqLvl() <= m_attacker->GetMLevel())
+    if (itemutils::effectiveReqLevel(m_attacker, PWeapon) <= m_attacker->GetMLevel())
     {
         num = PWeapon->getHitCount();
     }

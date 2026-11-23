@@ -61,6 +61,7 @@
 #include "utils/battleutils.h"
 #include "utils/charutils.h"
 #include "utils/fishingutils.h"
+#include "utils/itemutils.h"
 #include "utils/messageutils.h"
 #include "utils/mobutils.h"
 #include "utils/mountutils.h"
@@ -721,19 +722,26 @@ auto CBattleEntity::GetMainWeaponDmg() -> uint16
 
     if (auto* weapon = dynamic_cast<CItemWeapon*>(m_Weapons[SLOT_MAIN]))
     {
-        if ((weapon->getReqLvl() > GetMLevel()) && dynamic_cast<const CCharEntity*>(this) != nullptr)
+        // XI: Forever Offline (gear sync): damage and the DMG_RATING of the weapon scale by sync level / item level when the
+        // weapon is above map.GEAR_SYNC_LEVEL, and the weapon counts as the sync level; with the setting at 0 all of these
+        // are the stock values
+        const auto weaponDamage = battleutils::GetSyncedWeaponDamage(this, weapon);
+        const auto weaponRating = battleutils::GetSyncedRawModifier(this, weapon, xi::Mod::DMG_RATING);
+        const auto weaponReqLvl = itemutils::effectiveReqLevel(this, weapon);
+
+        if ((weaponReqLvl > GetMLevel()) && dynamic_cast<const CCharEntity*>(this) != nullptr)
         {
             // TODO: Determine the difference between augments and latents w.r.t. equipment scaling.
             // MAIN_DMG_RATING already has equipment scaling applied elsewhere.
-            uint16 dmg = weapon->getDamage();
+            uint16 dmg = weaponDamage;
             dmg *= GetMLevel() * 3;
             dmg /= 4;
-            dmg /= weapon->getReqLvl();
-            return dmg + weapon->getModifier(xi::Mod::DMG_RATING) + getMod(xi::Mod::MAIN_DMG_RATING);
+            dmg /= weaponReqLvl;
+            return dmg + weaponRating + getMod(xi::Mod::MAIN_DMG_RATING);
         }
         else
         {
-            return weapon->getDamage() + weapon->getModifier(xi::Mod::DMG_RATING) + getMod(xi::Mod::MAIN_DMG_RATING);
+            return weaponDamage + weaponRating + getMod(xi::Mod::MAIN_DMG_RATING);
         }
     }
     return 0;
@@ -782,17 +790,22 @@ auto CBattleEntity::GetSubWeaponDmg() -> uint16
 
     if (auto* weapon = dynamic_cast<CItemWeapon*>(m_Weapons[SLOT_SUB]))
     {
-        if ((weapon->getReqLvl() > GetMLevel()) && dynamic_cast<const CCharEntity*>(this) != nullptr)
+        // XI: Forever Offline (gear sync): see the main hand above
+        const auto weaponDamage = battleutils::GetSyncedWeaponDamage(this, weapon);
+        const auto weaponRating = battleutils::GetSyncedRawModifier(this, weapon, xi::Mod::DMG_RATING);
+        const auto weaponReqLvl = itemutils::effectiveReqLevel(this, weapon);
+
+        if ((weaponReqLvl > GetMLevel()) && dynamic_cast<const CCharEntity*>(this) != nullptr)
         {
-            uint16 dmg = weapon->getDamage();
+            uint16 dmg = weaponDamage;
             dmg *= GetMLevel() * 3;
             dmg /= 4;
-            dmg /= weapon->getReqLvl();
-            return dmg + weapon->getModifier(xi::Mod::DMG_RATING) + getMod(xi::Mod::SUB_DMG_RATING);
+            dmg /= weaponReqLvl;
+            return dmg + weaponRating + getMod(xi::Mod::SUB_DMG_RATING);
         }
         else
         {
-            return weapon->getDamage() + weapon->getModifier(xi::Mod::DMG_RATING) + getMod(xi::Mod::SUB_DMG_RATING);
+            return weaponDamage + weaponRating + getMod(xi::Mod::SUB_DMG_RATING);
         }
     }
     return 0;
@@ -888,32 +901,41 @@ auto CBattleEntity::GetRangedWeaponDmg() -> uint16
 
     if (auto* weapon = dynamic_cast<CItemWeapon*>(m_Weapons[SLOT_RANGED]))
     {
-        if ((weapon->getReqLvl() > GetMLevel()) && dynamic_cast<const CCharEntity*>(this) != nullptr)
+        // XI: Forever Offline (gear sync): see the main hand above
+        const auto weaponDamage = battleutils::GetSyncedWeaponDamage(this, weapon);
+        const auto weaponRating = battleutils::GetSyncedRawModifier(this, weapon, xi::Mod::DMG_RATING);
+        const auto weaponReqLvl = itemutils::effectiveReqLevel(this, weapon);
+
+        if ((weaponReqLvl > GetMLevel()) && dynamic_cast<const CCharEntity*>(this) != nullptr)
         {
-            uint16 scaleddmg = weapon->getDamage();
+            uint16 scaleddmg = weaponDamage;
             scaleddmg *= GetMLevel() * 3;
             scaleddmg /= 4;
-            scaleddmg /= weapon->getReqLvl();
-            dmg += scaleddmg + weapon->getModifier(xi::Mod::DMG_RATING);
+            scaleddmg /= weaponReqLvl;
+            dmg += scaleddmg + weaponRating;
         }
         else
         {
-            dmg += weapon->getDamage() + weapon->getModifier(xi::Mod::DMG_RATING);
+            dmg += weaponDamage + weaponRating;
         }
     }
     if (auto* ammo = dynamic_cast<CItemWeapon*>(m_Weapons[SLOT_AMMO]))
     {
-        if ((ammo->getReqLvl() > GetMLevel()) && dynamic_cast<const CCharEntity*>(this) != nullptr)
+        const auto ammoDamage = battleutils::GetSyncedWeaponDamage(this, ammo);
+        const auto ammoRating = battleutils::GetSyncedRawModifier(this, ammo, xi::Mod::DMG_RATING);
+        const auto ammoReqLvl = itemutils::effectiveReqLevel(this, ammo);
+
+        if ((ammoReqLvl > GetMLevel()) && dynamic_cast<const CCharEntity*>(this) != nullptr)
         {
-            uint16 scaleddmg = ammo->getDamage();
+            uint16 scaleddmg = ammoDamage;
             scaleddmg *= GetMLevel() * 3;
             scaleddmg /= 4;
-            scaleddmg /= ammo->getReqLvl();
-            dmg += scaleddmg + ammo->getModifier(xi::Mod::DMG_RATING);
+            scaleddmg /= ammoReqLvl;
+            dmg += scaleddmg + ammoRating;
         }
         else
         {
-            dmg += ammo->getDamage() + ammo->getModifier(xi::Mod::DMG_RATING);
+            dmg += ammoDamage + ammoRating;
         }
     }
     return dmg + getMod(xi::Mod::RANGED_DMG_RATING);
@@ -962,17 +984,21 @@ auto CBattleEntity::GetRangedWeaponRank() -> uint16
 
     if (auto* weapon = dynamic_cast<CItemWeapon*>(item))
     {
-        if ((weapon->getReqLvl() > GetMLevel()) && dynamic_cast<const CCharEntity*>(this) != nullptr)
+        // XI: Forever Offline (gear sync): see the main hand above
+        const auto weaponDamage = battleutils::GetSyncedWeaponDamage(this, weapon);
+        const auto weaponReqLvl = itemutils::effectiveReqLevel(this, weapon);
+
+        if ((weaponReqLvl > GetMLevel()) && dynamic_cast<const CCharEntity*>(this) != nullptr)
         {
-            uint16 scaleddmg = weapon->getDamage();
+            uint16 scaleddmg = weaponDamage;
             scaleddmg *= GetMLevel() * 3;
             scaleddmg /= 4;
-            scaleddmg /= weapon->getReqLvl();
+            scaleddmg /= weaponReqLvl;
             wDamage = scaleddmg;
         }
         else
         {
-            wDamage = weapon->getDamage();
+            wDamage = weaponDamage;
         }
 
         wDamage += weapon->getModifier(xi::Mod::RANGED_DMG_RANK);
@@ -1234,7 +1260,7 @@ auto CBattleEntity::ATT(SLOTTYPE slot) -> uint16
     {
         if (weapon)
         {
-            ATT += GetSkill(weapon->getSkillType()) + weapon->getILvlSkill();
+            ATT += GetSkill(weapon->getSkillType()) + battleutils::GetSyncedILvlBonus(this, weapon, weapon->getILvlSkill());
 
             // Smite applies (bonus ATTP) when using 2H or H2H weapons
             if (weapon->isTwoHanded() || weapon->isHandToHand())
@@ -1308,7 +1334,7 @@ auto CBattleEntity::RATT(uint16 bonusAtt) -> uint16
             if (weapon->getSkillType() != xi::SkillType::Fishing)
             {
                 skillLevel = GetSkill(weapon->getSkillType());
-                skillLevel += weapon->getILvlSkill();
+                skillLevel += battleutils::GetSyncedILvlBonus(this, weapon, weapon->getILvlSkill());
             }
         }
 
@@ -1404,7 +1430,7 @@ auto CBattleEntity::RACC(uint16 bonusAcc) -> uint16
             if (weapon->getSkillType() != xi::SkillType::Fishing)
             {
                 skillLevel = GetSkill(weapon->getSkillType());
-                skillLevel += weapon->getILvlSkill();
+                skillLevel += battleutils::GetSyncedILvlBonus(this, weapon, weapon->getILvlSkill());
             }
         }
 
@@ -1499,7 +1525,7 @@ auto CBattleEntity::ACC(uint8 attackNumber, uint16 offsetAccuracy) -> uint16
             if (PMainWeapon)
             {
                 skill     = PMainWeapon->getSkillType();
-                iLvlSkill = PMainWeapon->getILvlSkill();
+                iLvlSkill = battleutils::GetSyncedILvlBonus(this, PMainWeapon, PMainWeapon->getILvlSkill());
                 if ((skill == xi::SkillType::None && GetSkill(xi::SkillType::HandToHand) > 0) || PMainWeapon->isHandToHand())
                 {
                     skill         = xi::SkillType::HandToHand;
@@ -1513,7 +1539,7 @@ auto CBattleEntity::ACC(uint8 attackNumber, uint16 offsetAccuracy) -> uint16
             {
                 dexMultiplier = settings::get<float>("main.ONE_HAND_OFF_HAND_DEX_ACCURACY_MULTIPLIER");
                 skill         = weapon->getSkillType();
-                iLvlSkill     = weapon->getILvlSkill();
+                iLvlSkill     = battleutils::GetSyncedILvlBonus(this, weapon, weapon->getILvlSkill());
 
                 if (skill == xi::SkillType::None && GetSkill(xi::SkillType::HandToHand) > 0)
                 {
@@ -1527,7 +1553,7 @@ auto CBattleEntity::ACC(uint8 attackNumber, uint16 offsetAccuracy) -> uint16
             }
             else if (PMainWeapon && PMainWeapon->isHandToHand())
             {
-                iLvlSkill     = PMainWeapon->getILvlSkill();
+                iLvlSkill     = battleutils::GetSyncedILvlBonus(this, PMainWeapon, PMainWeapon->getILvlSkill());
                 skill         = xi::SkillType::HandToHand;
                 dexMultiplier = settings::get<float>("main.HAND_TO_HAND_DEX_ACCURACY_MULTIPLIER");
             }
@@ -1536,7 +1562,7 @@ auto CBattleEntity::ACC(uint8 attackNumber, uint16 offsetAccuracy) -> uint16
         {
             if (auto* weapon = dynamic_cast<CItemWeapon*>(m_Weapons[SLOT_MAIN]))
             {
-                iLvlSkill = weapon->getILvlSkill();
+                iLvlSkill = battleutils::GetSyncedILvlBonus(this, weapon, weapon->getILvlSkill());
             }
             skill         = xi::SkillType::HandToHand;
             dexMultiplier = settings::get<float>("main.HAND_TO_HAND_DEX_ACCURACY_MULTIPLIER");
@@ -1913,7 +1939,7 @@ void CBattleEntity::addEquipModifiers(CItemEquipment* PItem)
 
     for (auto& i : PItem->modList)
     {
-        m_modStat[i.getModID()] += battleutils::GetScaledItemModifier(this, PItem, i.getModID());
+        m_modStat[i.getModID()] += battleutils::GetSyncedItemModifier(this, PItem, i.getModID());
     }
 }
 
@@ -2039,7 +2065,7 @@ void CBattleEntity::delEquipModifiers(CItemEquipment* PItem, bool isDelevel /* =
 
     for (auto& i : PItem->modList)
     {
-        m_modStat[i.getModID()] -= battleutils::GetScaledItemModifier(this, PItem, i.getModID(), isDelevel);
+        m_modStat[i.getModID()] -= battleutils::GetSyncedItemModifier(this, PItem, i.getModID(), isDelevel);
     }
 }
 
@@ -2092,13 +2118,14 @@ auto CBattleEntity::getMaxGearMod(xi::Mod modID) -> int16
         auto* PItem = PChar->getEquip((SLOTTYPE)i);
         if (PItem && (PItem->isType(ITEM_EQUIPMENT) || PItem->isType(ITEM_WEAPON)))
         {
-            // TODO: support gear scaling
-            if (PItem->getReqLvl() > PChar->GetMLevel())
+            // XI: Forever Offline (gear sync): the item counts as the sync level when it is above map.GEAR_SYNC_LEVEL, and its mod
+            // is scaled by the sync rule; with the setting at 0 this is the item's own mod, as before
+            if (itemutils::effectiveReqLevel(PChar, PItem) > PChar->GetMLevel())
             {
                 continue;
             }
 
-            uint16 modValue = PItem->getModifier(modID);
+            uint16 modValue = static_cast<uint16>(battleutils::GetSyncedItemModifier(PChar, PItem, modID));
 
             if (modValue > maxModValue)
             {

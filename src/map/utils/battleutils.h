@@ -262,7 +262,13 @@ auto CalculateWeaponSkillTP(CBattleEntity*, CWeaponSkill*, int16) -> int16;
 auto RemoveAmmo(CCharEntity*, int quantity = 1) -> bool;
 auto GetMeritValue(CBattleEntity*, xi::Merit) -> int32;
 
-auto GetScaledItemModifier(CBattleEntity*, CItemEquipment*, xi::Mod, bool isDelevel = false) -> int32;
+auto GetScaledItemModifier(CBattleEntity*, const CItemEquipment*, xi::Mod, bool isDelevel = false) -> int32;
+// XI: Forever Offline (gear sync, map.GEAR_SYNC_LEVEL): the same, with the sync rule applied first. See battleutils.cpp.
+auto GetSyncedItemModifier(CBattleEntity*, const CItemEquipment*, xi::Mod, bool isDelevel = false) -> int32;
+auto GetSyncedModAmount(const CItemEquipment*, xi::Mod, int32 amount) -> int32;
+auto GetSyncedWeaponDamage(const CBattleEntity*, const CItemWeapon*) -> uint16;
+auto GetSyncedRawModifier(const CBattleEntity*, const CItemEquipment*, xi::Mod) -> int16;
+auto GetSyncedILvlBonus(const CBattleEntity*, const CItemEquipment*, uint16 stockBonus) -> uint16;
 auto GetSpikesDamageType(ActionReactKind spikesType) -> xi::DamageType;
 auto GetEnspellDamageType(ENSPELL enspellType) -> xi::DamageType;
 auto GetRuneEnhancementDamageType(xi::StatusEffect runeEffect) -> xi::DamageType;
