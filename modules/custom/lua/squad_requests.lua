@@ -102,6 +102,44 @@ local function report(player, mate, spellName, result)
     end
 end
 
+-- Lines of this file's own (squad.lua's voices have none for these events). Printed in party chat as the mate, like every Squads line.
+R.LINES = R.LINES or {}
+R.LINES.selfonly = {
+    '{spell} only works on whoever casts it, I cannot put it on you.',
+    'I cannot cast {spell} on you, it only takes the caster.',
+}
+
+-- 'cure_iv' -> 'Cure IV'
+local function pretty(name)
+    local text = tostring(name):gsub('_', ' ')
+    text = text:gsub('(%a)([%w]*)', function(first, rest)
+        local word = first .. rest
+        if word:match('^[ivxIVX]+$') then
+            return word:upper()
+        end
+
+        return first:upper() .. rest
+    end)
+
+    return text
+end
+
+local function say(player, mate, event, vars)
+    local lines = R.LINES[event]
+    if lines == nil or #lines == 0 then
+        return
+    end
+
+    local text = lines[math.random(#lines)]
+    text = text:gsub('{(%w+)}', function(key)
+        return tostring((vars or {})[key] or '')
+    end)
+
+    pcall(function()
+        player:printToPlayer(text, 4, mate:getPacketName())
+    end)
+end
+
 -- what the spell can be cast on: 'enemy' | 'dead' | 'party' | 'self' | '' (the binding of the rebuilt squad.cpp is missing: leave the line to squad_logic.lua)
 local function kindOf(spellId)
     local f = rawget(_G, 'SquadSpellKind')
@@ -177,6 +215,13 @@ function R.cast(player, askedMates, everyone, spellId, spellName, named)
     -- spells: every mate that can casts at the enemy.
     if everyone and kind ~= 'enemy' then
         everyone = false
+    end
+
+    -- G6: a spell that only works on its caster (Warp, Escape, Reraise, Utsusemi, Tonko) cannot be put on you. Before, "warp" was accepted (a false
+    -- "On it") or answered with the misleading "nothing to cast on". One mate says what is true, once.
+    if kind == 'self' and not (named ~= nil and #askedMates == 1 and askedMates[1] == named) then
+        say(player, askedMates[1], 'selfonly', { spell = pretty(spellName) })
+        return true
     end
 
     if kind ~= 'enemy' and R.taken(player, spellId, target) then
