@@ -61,6 +61,8 @@
 #include "map/packets/c2s/0x077_group_change2.h"
 #include "map/packets/c2s/0x0b5_chat_std.h"
 #include "map/packets/c2s/0x0b6_chat_name.h"
+#include "map/packets/c2s/0x0be_merits.h"
+#include "map/packets/c2s/0x0bf_job_points_spend.h"
 #include "map/packets/c2s/0x0c4_group_comlink_active.h"
 #include "map/items/item_linkshell.h"
 #include "map/items/transactions/item_claim.h"
@@ -2463,6 +2465,37 @@ class BotsModule : public CPPModule
 
                                GP_CLI_COMMAND_GROUP_LEAVE pkt{};
                                pkt.Kind = PartyKind::Party;
+                               return inject(b, pkt);
+                           });
+
+        // Merits of a bot: the client's own packet 0x0BE, handed to the server's handler, so every check (caps, costs, mog house) is the server's.
+        // kind 2 = change mode (p1 1 = limit points, 0 = experience), kind 3 = edit (p1 1 = raise, 0 = lower; p2 = the merit id shifted right by one).
+        ::lua.set_function("BotMeritPacket", [](uint32 charId, uint8 kind, uint8 p1, uint16 p2) -> bool
+                           {
+                               Bot* b = botOf(charId);
+                               if (!charOf(b))
+                               {
+                                   return false;
+                               }
+
+                               GP_CLI_COMMAND_MERITS pkt{};
+                               pkt.Kind   = kind;
+                               pkt.Param1 = p1;
+                               pkt.Param2 = p2;
+                               return inject(b, pkt);
+                           });
+
+        // Job points of a bot: packet 0x0BF (spend one job point on the type `index`), the same pattern. The handler wants the bot in a mog house.
+        ::lua.set_function("BotJobPointPacket", [](uint32 charId, uint16 index) -> bool
+                           {
+                               Bot* b = botOf(charId);
+                               if (!charOf(b))
+                               {
+                                   return false;
+                               }
+
+                               GP_CLI_COMMAND_JOB_POINTS_SPEND pkt{};
+                               pkt.Index = index;
                                return inject(b, pkt);
                            });
     }
