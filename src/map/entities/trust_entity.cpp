@@ -202,6 +202,17 @@ void CTrustEntity::Spawn()
 {
     // CMobEntity::Spawn rolls a level, recalculates stats from mob data, moves to the spawn point and
     // starts roaming. A trust's level and stats are set at summon, and it spawns next to its master.
+    // XI: Forever Offline: a squad Blue Mage's set (SQUAD_BLU_*, written when the mate was built) is read by the Squad window and by Gambits,
+    // and the spawn clears local variables: keep it across the spawn.
+    std::vector<std::pair<std::string, uint32>> keptBlue;
+    for (const auto& [name, value] : GetLocalVars())
+    {
+        if (name.rfind("SQUAD_BLU_", 0) == 0)
+        {
+            keptBlue.emplace_back(name, value);
+        }
+    }
+
     // NOLINTNEXTLINE(bugprone-parent-virtual-call): Grandparent call, skips CMobEntity's impl on purpose.
     CBattleEntity::Spawn();
 
@@ -209,6 +220,10 @@ void CTrustEntity::Spawn()
     if (squadId_ != 0)
     {
         SetLocalVar("SQUAD_ID", squadId_);
+        for (const auto& [name, value] : keptBlue)
+        {
+            SetLocalVar(name, value);
+        }
     }
 
     luautils::OnMobSpawn(this);
