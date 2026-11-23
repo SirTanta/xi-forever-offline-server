@@ -635,38 +635,210 @@ function R.pre(player, text, hadAutoTranslate)
         end,
     })
 
-    if intent == nil or intent.group then
+    if intent == nil then
         return false
     end
 
     return R.run(player, mates, intent, text, d)
 end
 
--- the units of a request (one per family and person) go through the same asking as a spell typed in full
+-----------------------------------
+-- G3 (extra): a group is a target
+-- "sneak us", "protect everyone", "invis party", "haste all" were silent no-ops (one target only: you, or one name). With the extras on, "us",
+-- "everyone", "party", "team", "all" mean every living member of the party who can take the spell (people; squad mates too for the spells
+-- that are good for them). One request, one acknowledgement: the casts are spread over the mates that are free, and a mate that is still
+-- casting is waited for, a second at a time, up to R.BUSY_RETRIES seconds.
+-----------------------------------
+R.BUSY_RETRIES = 12
+R.MAX_UNITS = 12 -- most casts of one request
+
+local function isPlayer(entity)
+    local ok, kind = pcall(function()
+        return entity:getObjType()
+    end)
+
+    return ok and kind == xi.objType.PC
+end
+
+local function sameZone(a, b)
+    local ok, same = pcall(function()
+        return a:getZoneID() == b:getZoneID()
+    end)
+
+    return ok and same
+end
+
+local function isDown(entity)
+    local ok, down = pcall(function()
+        return entity:isDead()
+    end)
+
+    return ok and down == true
+end
+
+-- who a group request is about: you first, then the party in its order
+local function groupTargets(player, fam)
+    local out = {}
+    for _, member in ipairs(party(player)) do
+        local ok = sameZone(player, member) and (isPlayer(member) or fam.scope == 'all')
+        if ok and fam.dead then
+            ok = isPlayer(member) and isDown(member)
+        elseif ok then
+            ok = not isDown(member)
+        end
+
+        if ok then
+            if idOf(member) == idOf(player) then
+                table.insert(out, 1, member)
+            else
+                out[#out + 1] = member
+            end
+        end
+    end
+
+    return out
+end
+
+local function finish(req)
+    if req.finished then
+        return
+    end
+
+    req.finished = true
+    -- every unit that nobody could do: one line, the likeliest reason, from the mate that fits the request best
+    local worst, speaker, spell = 'unknown', nil, nil
+    for _, unit in ipairs(req.units) do
+        if unit.state == 'failed' and rank(unit.why) > rank(worst) then
+            worst, speaker, spell = unit.why, unit.mate or req.asked[1], unit.spellName
+        elseif unit.state == 'failed' and spell == nil then
+            speaker, spell = unit.mate or req.asked[1], unit.spellName
+        end
+    end
+
+    if spell ~= nil and not req.acked then
+        report(req.player, speaker or req.asked[1], spell, worst)
+    end
+end
+
+-- one try at one unit: the mates in order; true when a cast was accepted
+local function tryUnit(req, unit)
+    local sawBusy, worst, worstMate = false, 'unknown', nil
+    for _, mate in ipairs(req.asked) do
+        local result = SquadCastSpell(req.player, mate, unit.id, unit.named)
+        if result == 'cast' then
+            return 'cast', mate
+        elseif result == 'busy' then
+            sawBusy = true
+        elseif rank(result) > rank(worst) or worstMate == nil then
+            worst, worstMate = result, mate
+        end
+    end
+
+    if sawBusy then
+        return 'busy'
+    end
+
+    return 'failed', worst, worstMate
+end
+
+local function step(req)
+    local waiting = false
+    for _, unit in ipairs(req.units) do
+        if unit.state == 'pending' then
+            if R.taken(req.player, unit.id, unit.target) then
+                unit.state = 'taken'
+            else
+                local result, a, b = tryUnit(req, unit)
+                if result == 'cast' then
+                    unit.state = 'casting'
+                    R.claim(req.player, unit.id, unit.target)
+                    R.markLine(req.player, req.text)
+                    if not req.acked then
+                        req.acked = true
+                        R.acknowledge(req.player, a, unit.spellName, unit.id, unit.target)
+                    end
+                elseif result == 'busy' then
+                    waiting = true
+                else
+                    unit.state, unit.why, unit.mate = 'failed', a, b
+                end
+            end
+        end
+    end
+
+    if waiting and req.retries < R.BUSY_RETRIES then
+        req.retries = req.retries + 1
+        local ok = pcall(function()
+            req.player:timer(1000, function()
+                step(req)
+            end)
+        end)
+
+        if not ok then
+            finish(req)
+        end
+
+        return
+    end
+
+    for _, unit in ipairs(req.units) do
+        if unit.state == 'pending' then
+            unit.state, unit.why, unit.mate = 'failed', 'busy', nil
+        end
+    end
+
+    finish(req)
+end
+
+-- the units of a request (one per family and person) are asked together; true when there was something to do
 function R.run(player, mates, intent, text, d)
-    local asked = intent.asked ~= nil and { intent.asked } or mates
-    local handled = false
+    local req = { player = player, asked = intent.asked ~= nil and { intent.asked } or mates, units = {}, text = text, retries = 0, acked = false }
     for _, key in ipairs(intent.keys) do
         local fam = d.FAMILIES[key]
         local targets = {}
+        local function add(entity)
+            for _, t in ipairs(targets) do
+                if idOf(t) == idOf(entity) then
+                    return
+                end
+            end
+
+            targets[#targets + 1] = entity
+        end
+
+        if intent.group then
+            for _, member in ipairs(groupTargets(player, fam)) do
+                add(member)
+            end
+        end
+
         if intent.me then
-            targets[#targets + 1] = player
+            add(player)
         end
 
         for _, member in ipairs(intent.members) do
-            targets[#targets + 1] = member
+            add(member)
         end
 
         local name = fam.spells[intent.tiers[key] or 1]
         local id = name ~= nil and spellIdOf(name) or nil
         if id ~= nil then
             for _, target in ipairs(targets) do
-                handled = R.cast(player, asked, false, id, name:lower(), target ~= player and target or nil, text) or handled
+                if #req.units < R.MAX_UNITS then
+                    req.units[#req.units + 1] = {
+                        fam = key, id = id, spellName = name:lower(), target = target, named = idOf(target) ~= idOf(player) and target or nil, state = 'pending',
+                    }
+                end
             end
         end
     end
 
-    return handled
+    if #req.units == 0 then
+        return false
+    end
+
+    step(req)
+    return true
 end
 
 -----------------------------------
