@@ -51,6 +51,11 @@ public:
 
     auto passiveTrust() -> IsPassiveTrust;
 
+    // XI: Forever Offline: a KO'd squad mate stays as a targetable body in her master's party (Die) until she is Raised (RaiseSquadMate), dismissed or
+    // her master zones. Raise level 1..4 = Raise, Raise II, Raise III, Arise: the HP a player gets back (10, 25, 50, 100 percent) and the weakness effect
+    // (5 minutes, Arise 3). Returns false when she is not a KO'd squad mate.
+    auto RaiseSquadMate(uint8 raiseLevel) -> bool;
+
     // XI: Forever Offline: a squad Puppetmaster's own automaton record (frame, head, attachments, stats), built when she raises it
     // (puppetutils::LoadSquadAutomaton). It is hers alone: her master's automatonInfo_ is never read or written for her.
     auto squadAutomaton() -> AutomatonInfo&

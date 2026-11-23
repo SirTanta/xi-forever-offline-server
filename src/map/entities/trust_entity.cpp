@@ -214,6 +214,33 @@ void CTrustEntity::Die()
     CBattleEntity::Die();
 }
 
+auto CTrustEntity::RaiseSquadMate(uint8 raiseLevel) -> bool
+{
+    if (!isSquadMate() || !isDead() || raiseLevel == 0 || raiseLevel > 4)
+    {
+        return false;
+    }
+
+    // the numbers of CCharEntity::OnRaise: the HP a player gets back and the weakness (75 percent less HP and MP, slow) for 5 minutes, Arise 3
+    static constexpr double hpPart[] = { 0.0, 0.10, 0.25, 0.50, 1.0 };
+
+    m_Behavior &= ~xi::Behavior::Raisable;
+    StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Weakness, static_cast<uint16>(xi::StatusEffect::Weakness), 1, 0s, raiseLevel == 4 ? 3min : 5min);
+
+    // the death state ends on its next update (a non-player's state completes once the entity is no longer dead)
+    PAI->Accept_Raise();
+    addHP(std::max<uint16>(static_cast<uint16>(GetMaxHP() * hpPart[raiseLevel]), 1));
+    animation = xi::Animation::None;
+    updatemask |= UPDATE_HP;
+
+    if (raiseLevel == 4)
+    {
+        StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Reraise, static_cast<uint16>(xi::StatusEffect::Reraise), 3, 0s, 1h);
+    }
+
+    return true;
+}
+
 void CTrustEntity::Spawn()
 {
     // CMobEntity::Spawn rolls a level, recalculates stats from mob data, moves to the spawn point and
