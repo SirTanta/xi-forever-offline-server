@@ -114,6 +114,20 @@ R.LINES.noraise = {
     'You are standing and so is everyone else, no Raise needed.',
 }
 
+R.LINES.already = {
+    '{who} already has {spell}.',
+    '{spell} is already on {who}.',
+}
+R.LINES.noneed = {
+    'There is nothing to cure on {who}.',
+    '{who} does not need {spell} right now.',
+}
+R.LINES.standing = {
+    '{who} is standing, no Raise needed.',
+}
+R.LINES.refuse = {
+    '{why}',
+}
 R.LINES.failed = {
     'That {spell} did not land.',
     '{spell} fizzled, it did not take. Ask again.',
@@ -729,6 +743,115 @@ local function finish(req)
     if spell ~= nil and not req.acked then
         report(req.player, speaker or req.asked[1], spell, worst)
     end
+
+    -- nothing was cast and nothing failed: say why, once (everyone has it already, nobody needs it, nobody is down)
+    if not req.acked and spell == nil and req.said ~= nil then
+        local voice = req.asked[1]
+        say(req.player, voice, req.said.kind, req.said.facts)
+    end
+end
+
+-----------------------------------
+-- G8 (extra): is it needed, and who is the best one to do it
+-- Cure at full health, a -na with nothing to cure and a buff that is already on all cast before, and the first mate in call order cast even when a
+-- better healer or a mate with more MP was out. With the extras on: a request nobody needs is answered once ("Sunie already has Sneak", "there is
+-- nothing to cure on Jon") and not cast; and the mate who casts is chosen: the job that fits the request first (a White Mage for Cure, a Red Mage for
+-- Sneak), then the most MP left, then the nearest, then the order of the squad. A named mate is always the one asked.
+-----------------------------------
+local function effectId(name)
+    return name ~= nil and xi.effect ~= nil and xi.effect[name] or nil
+end
+
+local function hasEffect(entity, name)
+    local id = effectId(name)
+    if id == nil then
+        return false
+    end
+
+    local ok, has = pcall(function()
+        return entity:hasStatusEffect(id)
+    end)
+
+    return ok and has == true
+end
+
+-- why this person needs nothing from this family, or nil when they do
+local function noNeed(d, fam, target)
+    if fam.need == 'hp' then
+        local ok, hpp = pcall(function()
+            return target:getHPP()
+        end)
+
+        if ok and hpp ~= nil and hpp >= d.NEED_HP then
+            return 'noneed'
+        end
+    elseif fam.need == 'status' then
+        for _, name in ipairs(fam.cures or {}) do
+            if hasEffect(target, name) then
+                return nil
+            end
+        end
+
+        return 'noneed'
+    elseif fam.effect ~= nil and hasEffect(target, fam.effect) then
+        return 'already'
+    end
+
+    return nil
+end
+
+local function roleOf(mate, fam)
+    local ok, job = pcall(function()
+        return mate:getMainJob()
+    end)
+
+    for n, role in ipairs(fam.roles or {}) do
+        if ok and role == job then
+            return n
+        end
+    end
+
+    return 9
+end
+
+-- the mates in the order they are asked for this unit
+local function ordered(req, unit)
+    if #req.asked == 1 then
+        return req.asked
+    end
+
+    local fam = req.d.FAMILIES[unit.fam]
+    local list = {}
+    for i, mate in ipairs(req.asked) do
+        local okM, mp = pcall(function()
+            return mate:getMP()
+        end)
+
+        local okD, dist = pcall(function()
+            return mate:checkDistance(unit.target)
+        end)
+
+        list[#list + 1] = { mate = mate, role = roleOf(mate, fam), mp = okM and mp or 0, dist = okD and dist or 0, i = i }
+    end
+
+    table.sort(list, function(a, b)
+        if a.role ~= b.role then
+            return a.role < b.role
+        elseif a.mp ~= b.mp then
+            return a.mp > b.mp
+        elseif a.dist ~= b.dist then
+            return a.dist < b.dist
+        end
+
+        return a.i < b.i
+    end)
+
+    local out = {}
+    for _, entry in ipairs(list) do
+        out[#out + 1] = entry.mate
+    end
+
+    return out
 end
 
 -----------------------------------
@@ -758,7 +881,7 @@ end
 -- one try at one unit: the mates in order, every tier best first; 'cast' (and who, and which spell), 'busy', or 'failed' (and why)
 local function tryUnit(req, unit)
     local sawBusy, worst, worstMate = false, 'unknown', nil
-    for _, mate in ipairs(req.asked) do
+    for _, mate in ipairs(ordered(req, unit)) do
         local mateWorst = 'unknown'
         for _, tier in ipairs(unit.tiers) do
             local result = SquadCastSpell(req.player, mate, tier.id, unit.named)
@@ -838,7 +961,7 @@ end
 
 -- the units of a request (one per family and person) are asked together; true when there was something to do
 function R.run(player, mates, intent, text, d)
-    local req = { player = player, asked = intent.asked ~= nil and { intent.asked } or mates, units = {}, text = text, retries = 0, acked = false }
+    local req = { player = player, asked = intent.asked ~= nil and { intent.asked } or mates, units = {}, text = text, retries = 0, acked = false, d = d }
     for _, key in ipairs(intent.keys) do
         local fam = d.FAMILIES[key]
         local targets = {}
@@ -867,9 +990,37 @@ function R.run(player, mates, intent, text, d)
         end
 
         local tiers = tierList(fam, intent.tiers[key])
-        if #tiers > 0 then
+        if fam.kind == 'caster' then
+            req.said = req.said or { kind = 'refuse', facts = { why = fam.refuse or 'I cannot do that.' } }
+        elseif #tiers > 0 then
+            -- "raise" with nobody named is the person who is down: you, else the first fallen member of the party
+            if fam.dead and #targets == 1 and idOf(targets[1]) == idOf(player) and not isDown(player) then
+                local fallen = firstFallen(player)
+                if fallen == nil then
+                    req.said = req.said or { kind = 'noraise', facts = {} }
+                    targets = {}
+                else
+                    targets = { fallen }
+                end
+            end
+
             for _, target in ipairs(targets) do
-                if #req.units < R.MAX_UNITS then
+                local who = idOf(target) == idOf(player) and 'you' or tostring(target:getName())
+                local facts = { who = who, spell = fam.name }
+                local why = nil
+                if (fam.dead == true) ~= isDown(target) then
+                    why = 'skip'
+                    if fam.dead then
+                        req.said = req.said or { kind = 'standing', facts = facts }
+                    end
+                else
+                    why = noNeed(d, fam, target)
+                    if why ~= nil then
+                        req.said = req.said or { kind = why, facts = facts }
+                    end
+                end
+
+                if why == nil and #req.units < R.MAX_UNITS then
                     req.units[#req.units + 1] = {
                         fam = key, tiers = tiers, id = tiers[1].id, spellName = tiers[1].name, target = target,
                         named = idOf(target) ~= idOf(player) and target or nil, state = 'pending',
@@ -880,6 +1031,12 @@ function R.run(player, mates, intent, text, d)
     end
 
     if #req.units == 0 then
+        if req.said ~= nil and not intent.implicit then
+            R.markLine(player, text)
+            finish(req)
+            return true
+        end
+
         return false
     end
 
