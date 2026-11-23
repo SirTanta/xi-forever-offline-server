@@ -2424,6 +2424,9 @@ xi.bots.partyOrder = function(player, text)
         return
     end
 
+    -- (v0.3.3, G18) every bot obeys, one of them answers: five "k, following" for one "follow" was five lines for one order
+    local answered = false
+    local oneVoice = xi.squad ~= nil and xi.squad.requestsOn ~= nil and xi.squad.requestsOn(player)
     for _, member in pairs(player:getParty() or {}) do
         local id = member:getID()
         if member:getObjType() == xi.objType.PC and BotIsBot(id) then
@@ -2454,7 +2457,8 @@ xi.bots.partyOrder = function(player, text)
             member:timer(math.random(500, 1500), function(b)
                 local line = ({ follow = 'k, following', stay = 'k, staying here', stop = 'stopping', attack = 'on it',
                                 release = b:isDead() and 'ok, see you back in town' or nil })[word]
-                if line then
+                if line and not (oneVoice and answered) then
+                    answered = true
                     chat(b, 4, line)
                 end
             end)
