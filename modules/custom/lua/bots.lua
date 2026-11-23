@@ -2381,6 +2381,25 @@ local function spellRequest(player, text)
         return true
     end
 
+    -- (v0.3.3, G11; extras: !sqreq more on) one price for a Teleport: a bot white mage that you shout for asks for gil, and the same Teleport asked in
+    -- party chat was free. Asked in party chat it now costs what the shout would have, paid when it casts.
+    if squad ~= nil and squad.requestsMore ~= nil and squad.requestsMore(player) and teleOk and tele ~= nil and tele.priceForSpell ~= nil then
+        local fee, crag = tele.priceForSpell(spellId)
+        if fee ~= nil then
+            if player:getGil() < fee then
+                caster:timer(math.random(800, 1600), function(b)
+                    chat(b, 4, 'Teleport-' .. crag .. ' is ' .. fee .. ' gil from me, you need that first')
+                end)
+
+                return true
+            end
+
+            player:delGil(fee)
+            caster:addGil(fee)
+            spellName = spellName .. ' (' .. fee .. ' gil)'
+        end
+    end
+
     if squad ~= nil and squad.requestClaim ~= nil then
         squad.requestClaim(player, spellId, target)
     end

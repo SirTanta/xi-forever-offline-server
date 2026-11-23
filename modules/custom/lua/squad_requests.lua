@@ -329,6 +329,10 @@ xi.squad.requestsOn = function(player)
     return R.on(player)
 end
 
+xi.squad.requestsMore = function(player)
+    return R.more(player)
+end
+
 xi.squad.requestTaken = function(player, spellId, target)
     return R.on(player) and R.taken(player, spellId, target)
 end
