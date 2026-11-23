@@ -151,3 +151,5 @@ custom/cpp/bots.cpp
 custom/lua/bots.lua
 # Loaded LAST: overrides here win over the era/phoenix folders above (fast travel overrides the Survival Guide menu)
 custom/late
+# Dev only: edit a Squads Lua file while the server runs and !squad reload (GM) / the file watcher reloads it in order. Does nothing unless a Squads file is saved or the command is used. Keep this line last.
+custom/lua/squad_reload.lua
