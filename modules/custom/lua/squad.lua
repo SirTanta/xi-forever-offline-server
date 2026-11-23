@@ -2579,10 +2579,18 @@ local function callMate(player, mate)
             resyncSquad(mobArg)
         end
         -- (Jon Tanta, 2026-11-21) SQUAD_IDLE (trust_controller.cpp): a mate the player has stopped gets no built-in Thief positioning
-        if squadThiefTick ~= nil and mobArg:getLocalVar('SQUAD_IDLE') == 0 and mobArg:isAlive() and mobArg:getMaster() ~= nil then
+        if squadThiefTick ~= nil and mobArg:getLocalVar('GAMBITS_OWNED') == 0 and mobArg:getLocalVar('SQUAD_IDLE') == 0 and mobArg:isAlive() and mobArg:getMaster() ~= nil then
             pcall(squadThiefTick, mobArg)
         end
-        squadTeamTick(mobArg) -- (spacing and the skillchain wait, once a second)
+        -- SQUAD_SEAM v2 begin sr_tick
+        if type(rawget(_G, 'SQUAD_PROFILE')) == 'table' and type(SQUAD_PROFILE.tick) == 'function' then
+            pcall(SQUAD_PROFILE.tick, mobArg)
+        end
+        -- SQUAD_SEAM v2 end sr_tick
+        -- GAMBITS_SEAM v1 (team tick): Gambits owns this mate, so Squads' spacing (TRUST_DISTANCE), chain and ext chain stay off it
+        if mobArg:getLocalVar('GAMBITS_OWNED') == 0 then
+            squadTeamTick(mobArg) -- (spacing and the skillchain wait, once a second)
+        end
         chatTick(mobArg)
         if type(xi.squad.pack) == 'table' then
             pcall(xi.squad.pack.tick, mobArg) -- (pack lines: fights and quiet moments while the AI is quiet)
@@ -3408,6 +3416,15 @@ commandObj.onTrigger = function(player, action, arg1, arg2, arg3, arg4, arg5, ar
         return
     end
 
+    -- SQUAD_SEAM v2 begin sr_command
+    if (action == 'profile' or action == 'export' or action == 'version') and type(rawget(_G, 'SQUAD_PROFILE')) == 'table'
+        and type(SQUAD_PROFILE.command) == 'function' then
+        local okSr, handledSr = pcall(SQUAD_PROFILE.command, player, squad, action, arg1, arg2, arg3, arg4, arg5,
+            { say = say, findMate = findMate, jobNames = jobNames, summonedMate = summonedMate,
+              dev = function(a, x, y, z) return SQUAD_DEV_CMD(player, a, x, y, z) end })
+        if okSr and handledSr then return end
+    end
+    -- SQUAD_SEAM v2 end sr_command
     if action == 'panel' then
         -- For the in-game Squad panel addon, which reads these lines and hides them from the chat log:
         --   squadpanel:<slot>|<name>|<main job>|<main level>|<sub job or ->|<sub level>|<role>|<mode>|<1 if the mate is out now>|<switch mask>
@@ -3499,6 +3516,11 @@ commandObj.onTrigger = function(player, action, arg1, arg2, arg3, arg4, arg5, ar
             end
         end
 
+        -- SQUAD_SEAM v2 begin sr_panel
+        if type(rawget(_G, 'SQUAD_PROFILE')) == 'table' and type(SQUAD_PROFILE.panelLines) == 'function' then
+            pcall(SQUAD_PROFILE.panelLines, player, squad, say)
+        end
+        -- SQUAD_SEAM v2 end sr_panel
         say(player, 'squadpanel:end')
         return
     end
@@ -3965,20 +3987,43 @@ commandObj.onTrigger = function(player, action, arg1, arg2, arg3, arg4, arg5, ar
     -- The Squad menu's "Apply now": the mates who are out come back with their new settings (no cooldown)
     if action == 'reapply' then
         local out = {}
+        -- GAMBITS_SEAM v1 (reapply gate): Apply now never dismisses, calls or applies a Rule Set to a mate Gambits owns
+        local gownSkipped = {}
         for _, mate in ipairs(orderedSquad(player, squad)) do
             if isSummoned(player, mate.id) then
-                out[#out + 1] = mate
+                local gownOk, gownOwned = false, false
+                if type(rawget(_G, 'GAMBITS_OWN')) == 'table' and type(GAMBITS_OWN.owns) == 'function' then
+                    gownOk, gownOwned = pcall(GAMBITS_OWN.owns, player, summonedMate(player, mate.id))
+                end
+                if gownOk and gownOwned == true then
+                    gownSkipped[#gownSkipped + 1] = mate
+                else
+                    out[#out + 1] = mate
+                end
             end
         end
 
-        player:clearTrusts()
+        if #gownSkipped == 0 then
+            player:clearTrusts()
+        else
+            -- only the mates Gambits does not own leave and come back (one by one); without SquadDismissMate they stay as they are
+            for _, mate in ipairs(gownSkipped) do
+                say(player, string.format('Gambits owns %s: Squads reapply skipped', mate.name))
+            end
+            local gownKept = {}
+            for _, mate in ipairs(out) do
+                local gownTrust = summonedMate(player, mate.id)
+                if gownTrust ~= nil and SquadDismissMate ~= nil and SquadDismissMate(gownTrust) then gownKept[#gownKept + 1] = mate end
+            end
+            out = gownKept
+        end
         for index, mate in ipairs(out) do
             player:timer(RECALL_WAIT_MS + (index - 1) * CALL_GAP_MS, function(entity)
                 callMate(entity, mate)
             end)
         end
 
-        if #out == 0 then
+        if #out == 0 and #gownSkipped == 0 then
             say(player, 'None of your squad mates are out.')
         end
 
@@ -5326,6 +5371,13 @@ local function addGambit(mob, target, condition, action, retry)
         condition = adjusted
     end
 
+    -- SQUAD_SEAM v2 begin sr_gambit
+    if type(rawget(_G, 'SQUAD_PROFILE')) == 'table' and type(SQUAD_PROFILE.filter_rule) == 'function' then
+        local okSr, keepSr, condSr = pcall(SQUAD_PROFILE.filter_rule, mob, target, condition, action)
+        if okSr and keepSr == false then return end
+        if okSr and condSr ~= nil then condition = condSr end
+    end
+    -- SQUAD_SEAM v2 end sr_gambit
     if retry ~= nil then
         mob:addGambit(target, condition, action, retry)
     else
@@ -5982,10 +6034,29 @@ end
 local function squadSpawn(mob)
     local main = jobs[mob:getMainJob()]
     if main == nil then
+        -- GAMBITS_SEAM v1 (spawn_norules): a job Squads has no rules for (SCH, DNC, RUN, GEO ...) is still marked owned when Gambits owns the mate
+        local gambitsMasterNoRules = mob:getMaster()
+        if gambitsMasterNoRules ~= nil and mob:getLocalVar('SQUAD_ID') ~= 0 and (gambitsMasterNoRules:getCharVar('GAMBITS_OWN_' .. mob:getLocalVar('SQUAD_ID')) or 0) > 0 then
+            mob:setLocalVar('GAMBITS_OWNED', 1)
+            return true
+        end
+
         return false
     end
 
+    -- GAMBITS_SEAM v1 (spawn): Gambits owns this mate (charvar GAMBITS_OWN_<slot> > 0 on its master): Squads builds nothing for it
+    local gambitsMaster = mob:getMaster()
+    if gambitsMaster ~= nil and mob:getLocalVar('SQUAD_ID') ~= 0 and (gambitsMaster:getCharVar('GAMBITS_OWN_' .. mob:getLocalVar('SQUAD_ID')) or 0) > 0 then
+        mob:setLocalVar('GAMBITS_OWNED', 1)
+        return true
+    end
+
     local role, mode = behaviorOf(mob)
+    -- SQUAD_SEAM v2 begin sr_spawn
+    if type(rawget(_G, 'SQUAD_PROFILE')) == 'table' and type(SQUAD_PROFILE.onSpawn) == 'function' then
+        pcall(SQUAD_PROFILE.onSpawn, mob)
+    end
+    -- SQUAD_SEAM v2 end sr_spawn
     local switches = switchesForMob(mob)
     activeBehavior = { role = role, mode = mode }
     activeSwitches = switches
@@ -6646,5 +6717,16 @@ if commandObj ~= nil and commandObj.onTrigger ~= nil then
         end
     end
 end
+
+-- SQUAD_SEAM v2 begin sr_handshake
+-- set once, only after the whole file loaded; the profile layer and the window read it to know the hooks survived
+SQUAD_SEAM = { version = 2, owners = { base = 0, profile = 1, advanced = 2 }, base = 'v1.15' }
+-- the dev handler for the profile layer, reached by a global: the command function is at the engine's limit of 60 upvalues,
+-- so the hook inside it must not name `commandObj` (it would be one more)
+SQUAD_DEV_CMD = function(...) return commandObj.onTrigger(...) end
+-- SQUAD_SEAM v2 end sr_handshake
+
+-- GAMBITS_SEAM v1 (handshake): set once, only after the whole file loaded; Gambits reads it to know its hooks survived
+GAMBITS_SEAM = { version = 1 }
 
 return m

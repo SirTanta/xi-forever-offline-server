@@ -143,7 +143,7 @@ local function step(player)
 
     for _, bard in ipairs(party) do
         if bard:getObjType() == xi.objType.TRUST and bard:getLocalVar('SQUAD_ID') ~= 0 and bard:getMainJob() == BRD then
-            if foe == nil or not bard:isAlive() or bard:getZoneID() ~= player:getZoneID() or bard:getLocalVar('SQUAD_ACT_OFF') == 1 then
+            if foe == nil or not bard:isAlive() or bard:getZoneID() ~= player:getZoneID() or bard:getLocalVar('SQUAD_ACT_OFF') == 1 or (tonumber(player:getCharVar('GAMBITS_OWN_' .. bard:getLocalVar('SQUAD_ID'))) or 0) > 0 then -- GAMBITS_GUARD v1 bard_walk_gate
                 hold(bard, false)
                 castGate(bard, true)
                 bard:setLocalVar('SQUAD_BW_HAS', 0)
