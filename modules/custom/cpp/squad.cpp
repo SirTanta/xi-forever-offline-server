@@ -1607,6 +1607,35 @@ auto squadCastSpell(CLuaBaseEntity* player, CLuaBaseEntity* mate, const uint16 s
     return spellResultName(trySquadCast(PChar, PTrust, static_cast<SpellID>(spellId), PNamed));
 }
 
+// Lua: SquadSpellKind(spellId) -> "enemy" | "dead" | "party" | "self" | "" (unknown spell)
+// What a spell can be cast on, read from the server's spell table with the same flags trySquadCast uses: an attack or debuff spell goes on an
+// enemy, a Raise on a fallen party member, a buff or heal on a party member, and anything else (Warp, Escape, Utsusemi, Reraise) only on its caster.
+auto squadSpellKind(const uint16 spellId) -> std::string
+{
+    CSpell* PSpell = spell::GetSpell(static_cast<SpellID>(spellId));
+    if (PSpell == nullptr)
+    {
+        return "";
+    }
+
+    if (PSpell->canTargetEnemy())
+    {
+        return "enemy";
+    }
+
+    if ((PSpell->getValidTarget() & TARGET_PLAYER_DEAD) != 0)
+    {
+        return "dead";
+    }
+
+    if ((PSpell->getValidTarget() & (TARGET_PLAYER_PARTY | TARGET_PLAYER_ALLIANCE)) != 0)
+    {
+        return "party";
+    }
+
+    return "self";
+}
+
 // Lua: SquadTryAbility(player, mate, abilityId) -> result name (cast, unknown, notready, notarget, busy)
 auto squadTryAbility(CLuaBaseEntity* player, CLuaBaseEntity* mate, const uint16 abilityId) -> std::string
 {
@@ -1884,6 +1913,7 @@ class SquadModule : public CPPModule
         ::lua.set_function("SquadAbilityName", squadAbilityName);
         ::lua.set_function("SquadTwoHourAbilityId", squadTwoHourAbilityId);
         ::lua.set_function("SquadCastSpell", squadCastSpell);
+        ::lua.set_function("SquadSpellKind", squadSpellKind);
         ::lua.set_function("SquadTryAbilityRaw", squadTryAbility);
         ::lua.set_function("GetSquad", getSquad);
         ::lua.set_function("SaveSquadMate", saveSquadMate);
