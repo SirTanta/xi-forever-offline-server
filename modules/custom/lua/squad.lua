@@ -2147,6 +2147,11 @@ xi.squad.onPartyChat = function(player, text)
         return
     end
 
+    -- (v0.3.3, G19) a request a squad mate just took ("sneak me") is an order, not conversation: the helper does not answer it a second time
+    if xi.squad.lineTaken ~= nil and xi.squad.lineTaken(player, text) then
+        return
+    end
+
     text = chatClean(text)
     if text == '' then
         return

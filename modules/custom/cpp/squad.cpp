@@ -1746,8 +1746,10 @@ class SquadModule : public CPPModule
 
         if (type == 0x0B5)
         {
-            forwardPartyChat(PChar, packet);
+            // (v0.3.3, G19) the mates read the line first: a request they take is marked in Lua, and the chat sidecar (xi.squad.onPartyChat)
+            // then leaves it alone instead of answering it as conversation
             handleSpellChat(PChar, packet);
+            forwardPartyChat(PChar, packet);
             return false; // the chat message always goes through
         }
 
