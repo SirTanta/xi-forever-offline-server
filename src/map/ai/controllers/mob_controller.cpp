@@ -36,6 +36,7 @@
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
 #include "entities/pet_entity.h"
+#include "entities/trust_entity.h"
 #include "lua/luautils.h"
 #include "mob_spell_container.h"
 #include "mobskill.h"
@@ -1462,7 +1463,13 @@ auto CMobController::DoCombatTick(timer::time_point tick) -> Task<void>
     if (PMob->m_OwnerID.isSet())
     {
         const auto* const POwnerChar = PMob->m_OwnerID.resolve<CCharEntity>();
-        const bool        claimStale = POwnerChar && POwnerChar->PClaimedMob != static_cast<CBattleEntity*>(PMob) && m_Tick >= m_DeclaimTime + 3s;
+        // XI: Forever Offline: when the owner is KO'd his claim is cleared (PClaimedMob), but a squad mate of his that is still alive and on this foe's hate list keeps
+        // the party's claim (m_OwnerID stays the owner, battleutils::HasClaim reads his alliance). A stranger never gets it: only that owner's own squad mates hold it,
+        // and once none of them is on the foe the claim is dropped as before.
+        const bool squadHolds = POwnerChar && POwnerChar->isDead() &&
+                                std::ranges::any_of(POwnerChar->PTrusts, [this](const CTrustEntity* PTrust)
+                                                    { return IsSquadMate(PTrust) && PTrust->isAlive() && PMob->PEnmityContainer->HasID(PTrust->id); });
+        const bool        claimStale = POwnerChar && POwnerChar->PClaimedMob != static_cast<CBattleEntity*>(PMob) && m_Tick >= m_DeclaimTime + 3s && !squadHolds;
         if (claimStale)
         {
             PMob->m_OwnerID.clean();
