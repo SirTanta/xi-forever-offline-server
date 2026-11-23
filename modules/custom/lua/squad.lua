@@ -3499,6 +3499,12 @@ commandObj.onTrigger = function(player, action, arg1, arg2, arg3, arg4, arg5, ar
             end
         end
 
+        -- The addon channel (packets/c2s/0x1f0_addon_channel.h): when this build handles it, say so, so a window may send its commands as that packet
+        -- instead of as chat lines. A build without the packet has no xi.addonChannel and says nothing, so the window keeps typing.
+        if type(xi.addonChannel) == 'table' then
+            say(player, 'squadpanel:chan|' .. tostring(xi.addonChannel.version))
+        end
+
         say(player, 'squadpanel:end')
         return
     end

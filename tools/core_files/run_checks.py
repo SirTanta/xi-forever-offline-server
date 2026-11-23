@@ -19,7 +19,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ROOT = os.path.dirname(os.path.dirname(HERE))
 
 
-def run_lua(path, lua_dir):
+def run_lua(path, root):
+    lua_dir = os.path.join(root, "modules", "custom", "lua")
+    extra = [os.path.join(root, "scripts", "globals", "gambits.lua"), os.path.join(root, "scripts", "enum", "job_ability.lua")]
+    if not all(os.path.isfile(x) for x in extra):
+        extra = []   # a test that needs them (test_core_channel_advert.lua) asserts its own usage line
     try:
         from lupa.luajit21 import LuaRuntime
     except ImportError:
@@ -31,7 +35,7 @@ def run_lua(path, lua_dir):
     rt = LuaRuntime(unpack_returned_tuples=True)
     g = rt.globals()
     g.CORE_TEST_HARNESS = True
-    g.arg = rt.table_from({1: lua_dir.replace("\\", "/")})
+    g.arg = rt.table_from({i + 1: v.replace("\\", "/") for i, v in enumerate([lua_dir, *extra])})
     with open(path, encoding="utf-8") as f:
         failed = rt.execute(f.read())
     return int(failed or 0)
@@ -46,9 +50,8 @@ def main(argv):
         r = subprocess.run([sys.executable, gen, "--check", "--root", a.root], capture_output=True, text=True)
         print(("ok   " if r.returncode == 0 else "FAIL ") + os.path.basename(gen) + " --check: " + (r.stdout + r.stderr).strip().splitlines()[-1])
         bad += r.returncode != 0
-    lua_dir = os.path.join(a.root, "modules", "custom", "lua")
     for test in sorted(glob.glob(os.path.join(a.root, "modules", "custom", "tests", "test_core_*.lua"))):
-        failed = run_lua(test, lua_dir)
+        failed = run_lua(test, a.root)
         if failed is None:
             continue
         print(("ok   " if failed == 0 else "FAIL ") + os.path.basename(test))
