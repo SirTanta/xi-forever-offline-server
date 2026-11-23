@@ -3491,18 +3491,18 @@ commandObj.onTrigger = function(player, action, arg1, arg2, arg3, arg4, arg5, ar
                 player:getCharVar('SQUAD_WSTP_' .. mate.id), chosen > 0 and wsName(chosen):gsub(' ', '_') or '-',
                 player:getCharVar('SQUAD_RANGE_' .. mate.id), wsList))
         end
+        -- The addon channel (packets/c2s/0x1f0_addon_channel.h): when this build handles it, say so, so a window may send its commands as that packet
+        -- instead of as chat lines. A build without the packet has no xi.addonChannel and says nothing, so the window keeps typing.
+        if type(xi.addonChannel) == 'table' then
+            say(player, 'squadpanel:chan|' .. tostring(xi.addonChannel.version))
+        end
+
         -- (servermenu 1.8) what the puller goes for, and the kinds of monster around the camp
         if c then
             say(player, 'squadpanel:campwant|' .. (c.want or '-'))
             for _, k in ipairs(campKinds(player, c)) do
                 say(player, string.format('squadpanel:campmob|%s|%d|%d|%d|%d', k.name, k.lo, k.hi, k.count, k.fits and 1 or 0))
             end
-        end
-
-        -- The addon channel (packets/c2s/0x1f0_addon_channel.h): when this build handles it, say so, so a window may send its commands as that packet
-        -- instead of as chat lines. A build without the packet has no xi.addonChannel and says nothing, so the window keeps typing.
-        if type(xi.addonChannel) == 'table' then
-            say(player, 'squadpanel:chan|' .. tostring(xi.addonChannel.version))
         end
 
         say(player, 'squadpanel:end')
