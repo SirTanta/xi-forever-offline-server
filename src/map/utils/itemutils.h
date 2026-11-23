@@ -122,11 +122,21 @@ private:
  *                                                                       *
  ************************************************************************/
 
+class CBattleEntity;
+
 namespace itemutils
 {
 
 void Initialize();
 void FreeItemList();
+
+// XI: Forever Offline (gear sync): map.GEAR_SYNC_LEVEL, 0 = off (stock behaviour). Read through settings::get, so it follows
+// a live reload.
+auto gearSyncLevel() -> uint8;
+
+// The level an item counts as for equip checks, latents and the weapon hit count of a player character: the item's required
+// level, or the sync level when the item is above it. Anything else (setting 0, squad mates, mobs) gets the item's own level.
+auto effectiveReqLevel(const CBattleEntity* entity, const CItemEquipment* item) -> uint8;
 
 auto GetDropList(uint16 DropID) -> DropList_t*;
 

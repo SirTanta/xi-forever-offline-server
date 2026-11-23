@@ -208,6 +208,18 @@ void applyEquipment(CTrustEntity* PTrust, const sol::table& equip)
 
         // Item modifiers (stats). Copy the list because addModifiers takes a non-const pointer.
         auto mods = item->modList;
+
+        // (gear sync, map.GEAR_SYNC_LEVEL) an item above the sync level gives its mods scaled by sync level / item level, the
+        // same rule a player character gets. With the setting at 0 the mods go in as they are.
+        if (itemutils::gearSyncLevel() > 0)
+        {
+            for (auto& mod : mods)
+            {
+                const auto synced = battleutils::GetSyncedModAmount(item, mod.getModID(), mod.getModAmount());
+                mod.setModAmount(static_cast<int16>(std::clamp<int32>(synced, INT16_MIN, INT16_MAX)));
+            }
+        }
+
         PTrust->addModifiers(&mods);
 
         // Main hand weapon: use the real damage, delay and weapon type

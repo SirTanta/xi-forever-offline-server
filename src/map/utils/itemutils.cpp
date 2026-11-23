@@ -25,6 +25,7 @@
 
 #include "common/database.h"
 #include "common/logging.h"
+#include "common/settings.h"
 #include "common/sjis.h"
 
 #include <common/types/hash_map.h>
@@ -42,6 +43,7 @@
 #include "items/item_puppet.h"
 #include "lua/luautils.h"
 #include "packets/c2s/0x02b_translate.h"
+#include "utils/gear_sync.h"
 
 namespace
 {
@@ -243,6 +245,28 @@ auto unarmedH2H() -> CItemWeapon*
 
 namespace itemutils
 {
+
+auto gearSyncLevel() -> uint8
+{
+    return settings::get<uint8>("map.GEAR_SYNC_LEVEL");
+}
+
+auto effectiveReqLevel(const CBattleEntity* entity, const CItemEquipment* item) -> uint8
+{
+    if (item == nullptr)
+    {
+        return 0;
+    }
+
+    // Player characters only: squad mates take the sync rule per mod in squad.cpp, and a mob's or a trust's stand-in weapon
+    // keeps the level it has
+    if (entity == nullptr || entity->objtype != TYPE_PC)
+    {
+        return item->getReqLvl();
+    }
+
+    return static_cast<uint8>(gear_sync::effectiveReqLevel(gearSyncLevel(), item->getReqLvl()));
+}
 
 auto GetDropList(uint16 DropID) -> DropList_t*
 {

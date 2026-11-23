@@ -1966,7 +1966,7 @@ void UnequipItem(CCharEntity* PChar, uint8 equipSlotID, Recalculate recalculate,
             PChar->m_dualWield = false;
         }
         PChar->delEquipModifiers(static_cast<CItemEquipment*>(PItem), isDelevel);
-        PChar->PLatentEffectContainer->DelLatentEffects(static_cast<CItemEquipment*>(PItem)->getReqLvl(), equipSlotID);
+        PChar->PLatentEffectContainer->DelLatentEffects(itemutils::effectiveReqLevel(PChar, static_cast<CItemEquipment*>(PItem)), equipSlotID);
         PChar->delPetModifiers(&static_cast<CItemEquipment*>(PItem)->petModList);
 
         switch (equipSlotID)
@@ -2109,7 +2109,7 @@ auto EquipArmor(CCharEntity* PChar, uint8 slotID, uint8 equipSlotID, uint8 conta
 
     if ((PChar->m_EquipBlock & (1 << equipSlotID)) || !(PItem->getJobs() & (1 << (static_cast<uint8>(PChar->GetMJob()) - 1))) ||
         (PItem->getSuperiorLevel() > PChar->getMod(xi::Mod::SUPERIOR_LEVEL)) ||
-        (PItem->getReqLvl() > (settings::get<bool>("map.DISABLE_GEAR_SCALING") ? PChar->GetMLevel() : PChar->jobs.job[static_cast<uint8>(PChar->GetMJob())])) ||
+        (itemutils::effectiveReqLevel(PChar, PItem) > (settings::get<bool>("map.DISABLE_GEAR_SCALING") ? PChar->GetMLevel() : PChar->jobs.job[static_cast<uint8>(PChar->GetMJob())])) ||
         !PItem->isEquippableByRace(PChar->look.race))
     {
         return false;
@@ -3148,7 +3148,7 @@ void EquipItem(CCharEntity* PChar, uint8 slotID, uint8 equipSlotID, uint8 contai
                 }
 
                 PChar->addEquipModifiers(PItem);
-                PChar->PLatentEffectContainer->AddLatentEffects(PItem->latentList, PItem->getReqLvl(), equipSlotID);
+                PChar->PLatentEffectContainer->AddLatentEffects(PItem->latentList, itemutils::effectiveReqLevel(PChar, PItem), equipSlotID);
                 PChar->PLatentEffectContainer->CheckLatentsEquip(equipSlotID);
                 PChar->addPetModifiers(&PItem->petModList);
 
@@ -3228,7 +3228,7 @@ void CheckValidEquipment(CCharEntity* PChar, bool isDelevel /* = false */)
             continue;
         }
 
-        if (PItem->getReqLvl() > (settings::get<bool>("map.DISABLE_GEAR_SCALING") ? PChar->GetMLevel() : PChar->jobs.job[static_cast<uint8>(PChar->GetMJob())]))
+        if (itemutils::effectiveReqLevel(PChar, PItem) > (settings::get<bool>("map.DISABLE_GEAR_SCALING") ? PChar->GetMLevel() : PChar->jobs.job[static_cast<uint8>(PChar->GetMJob())]))
         {
             UnequipItem(PChar, slotID, Recalculate::Yes, isDelevel);
             continue;
@@ -6507,9 +6507,9 @@ void RemoveAllEquipMods(CCharEntity* PChar)
         if (PItem)
         {
             PChar->delEquipModifiers(PItem);
-            if (PItem->getReqLvl() <= PChar->GetMLevel())
+            if (itemutils::effectiveReqLevel(PChar, PItem) <= PChar->GetMLevel())
             {
-                PChar->PLatentEffectContainer->DelLatentEffects(PItem->getReqLvl(), slotID);
+                PChar->PLatentEffectContainer->DelLatentEffects(itemutils::effectiveReqLevel(PChar, PItem), slotID);
                 PChar->PLatentEffectContainer->CheckLatentsEquip(slotID);
             }
         }
@@ -6524,9 +6524,9 @@ void ApplyAllEquipMods(CCharEntity* PChar)
         if (PItem)
         {
             PChar->addEquipModifiers(PItem);
-            if (PItem->getReqLvl() <= PChar->GetMLevel())
+            if (itemutils::effectiveReqLevel(PChar, PItem) <= PChar->GetMLevel())
             {
-                PChar->PLatentEffectContainer->AddLatentEffects(PItem->latentList, PItem->getReqLvl(), slotID);
+                PChar->PLatentEffectContainer->AddLatentEffects(PItem->latentList, itemutils::effectiveReqLevel(PChar, PItem), slotID);
                 PChar->PLatentEffectContainer->CheckLatentsEquip(slotID);
             }
         }

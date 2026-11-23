@@ -62,6 +62,8 @@
 #include "item_container.h"
 #include "items.h"
 #include "items/item_weapon.h"
+#include "utils/gear_sync.h"
+#include "utils/itemutils.h"
 #include "items/transactions/item_claim.h"
 #include "job_points.h"
 #include "mobskill.h"
@@ -6081,7 +6083,63 @@ auto GetMeritValue(CBattleEntity* PEntity, xi::Merit merit) -> int32
     return 0;
 }
 
-auto GetScaledItemModifier(CBattleEntity* PEntity, CItemEquipment* PItem, xi::Mod mod, bool isDelevel /* = false */) -> int32
+namespace
+{
+
+// How the stock scaler treats a mod when the wearer is below the item level (see gear_sync::stockScale)
+auto StockScaleKindOf(xi::Mod mod) -> gear_sync::StockScaleKind
+{
+    switch (mod)
+    {
+        case xi::Mod::DEF:
+        case xi::Mod::MAIN_DMG_RATING:
+        case xi::Mod::SUB_DMG_RATING:
+        case xi::Mod::RANGED_DMG_RATING:
+            return gear_sync::StockScaleKind::Rating;
+        case xi::Mod::HP:
+        case xi::Mod::MP:
+            return gear_sync::StockScaleKind::HpMp;
+        case xi::Mod::STR:
+        case xi::Mod::DEX:
+        case xi::Mod::VIT:
+        case xi::Mod::AGI:
+        case xi::Mod::INT:
+        case xi::Mod::MND:
+        case xi::Mod::CHR:
+        case xi::Mod::ATT:
+        case xi::Mod::RATT:
+        case xi::Mod::ACC:
+        case xi::Mod::RACC:
+        case xi::Mod::MATT:
+        case xi::Mod::MACC:
+            return gear_sync::StockScaleKind::Stat;
+        default:
+            return gear_sync::StockScaleKind::Zeroed;
+    }
+}
+
+// Mods that are identifiers, not amounts (an additional effect's type, sub effect, element and status, the weapon skill an
+// item adds, the scripted and priority flags): gear sync never scales these, the stock scaler zeroes them as it always did
+auto IsIdentifierMod(xi::Mod mod) -> bool
+{
+    switch (mod)
+    {
+        case xi::Mod::ITEM_ADDEFFECT_TYPE:
+        case xi::Mod::ITEM_SUBEFFECT:
+        case xi::Mod::ITEM_ADDEFFECT_ELEMENT:
+        case xi::Mod::ITEM_ADDEFFECT_STATUS:
+        case xi::Mod::ITEM_ADDEFFECT_SCRIPTED:
+        case xi::Mod::ITEM_ADDEFFECT_PRIORITY:
+        case xi::Mod::ADDS_WEAPONSKILL:
+            return true;
+        default:
+            return false;
+    }
+}
+
+} // namespace
+
+auto GetScaledItemModifier(CBattleEntity* PEntity, const CItemEquipment* PItem, xi::Mod mod, bool isDelevel /* = false */) -> int32
 {
     if (!PEntity || !PItem)
     {
@@ -6095,45 +6153,100 @@ auto GetScaledItemModifier(CBattleEntity* PEntity, CItemEquipment* PItem, xi::Mo
 
     if (playerLevel < PItem->getReqLvl())
     {
-        auto modAmount = PItem->getModifier(mod);
-        switch (mod)
-        {
-            case xi::Mod::DEF:
-            case xi::Mod::MAIN_DMG_RATING:
-            case xi::Mod::SUB_DMG_RATING:
-            case xi::Mod::RANGED_DMG_RATING:
-                modAmount *= 3;
-                modAmount /= 4;
-                break;
-            case xi::Mod::HP:
-            case xi::Mod::MP:
-                modAmount /= 2;
-                break;
-            case xi::Mod::STR:
-            case xi::Mod::DEX:
-            case xi::Mod::VIT:
-            case xi::Mod::AGI:
-            case xi::Mod::INT:
-            case xi::Mod::MND:
-            case xi::Mod::CHR:
-            case xi::Mod::ATT:
-            case xi::Mod::RATT:
-            case xi::Mod::ACC:
-            case xi::Mod::RACC:
-            case xi::Mod::MATT:
-            case xi::Mod::MACC:
-                modAmount /= 3;
-                break;
-            default:
-                modAmount = 0;
-                break;
-        }
-        return modAmount / PItem->getReqLvl();
+        return gear_sync::stockScale(StockScaleKindOf(mod), PItem->getModifier(mod), PItem->getReqLvl());
     }
     else
     {
         return PItem->getModifier(mod);
     }
+}
+
+// XI: Forever Offline (gear sync): one mod amount of an item through the sync rule alone: scaled by sync level / item level
+// when the item is above map.GEAR_SYNC_LEVEL, otherwise as it is. Identifier mods are never scaled.
+auto GetSyncedModAmount(const CItemEquipment* PItem, xi::Mod mod, int32 amount) -> int32
+{
+    if (PItem == nullptr || IsIdentifierMod(mod))
+    {
+        return amount;
+    }
+
+    return gear_sync::syncScale(amount, itemutils::gearSyncLevel(), PItem->getReqLvl());
+}
+
+// XI: Forever Offline (gear sync): GetScaledItemModifier with map.GEAR_SYNC_LEVEL applied first. With the setting at 0, or
+// for an item at or below it, this is GetScaledItemModifier. For an item above it, the amount is scaled by sync level / item
+// level, and then the stock scaler runs on the result with the sync level as the item level (a Level Sync or battlefield
+// restriction below the sync level).
+auto GetSyncedItemModifier(CBattleEntity* PEntity, const CItemEquipment* PItem, xi::Mod mod, bool isDelevel /* = false */) -> int32
+{
+    if (!PEntity || !PItem)
+    {
+        ShowWarning("battleutils::GetSyncedItemModifier() - PEntity or PItem received as null.");
+        return 0;
+    }
+
+    const auto syncLevel = itemutils::gearSyncLevel();
+    const auto itemLevel = PItem->getReqLvl();
+
+    if (!gear_sync::syncApplies(syncLevel, itemLevel))
+    {
+        return GetScaledItemModifier(PEntity, PItem, mod, isDelevel);
+    }
+
+    const int32 synced = GetSyncedModAmount(PItem, mod, PItem->getModifier(mod));
+
+    const int playerLevel = isDelevel ? PEntity->GetMLevel() + 1 : PEntity->GetMLevel();
+    if (playerLevel < syncLevel)
+    {
+        return gear_sync::stockScale(StockScaleKindOf(mod), synced, syncLevel);
+    }
+
+    return synced;
+}
+
+// XI: Forever Offline (gear sync): a weapon's damage for a player character, scaled by sync level / item level when the
+// weapon is above map.GEAR_SYNC_LEVEL. Everything else (setting 0, other entities, weapons at or below it) is the stock damage.
+auto GetSyncedWeaponDamage(const CBattleEntity* PEntity, const CItemWeapon* PWeapon) -> uint16
+{
+    if (PEntity == nullptr || PWeapon == nullptr)
+    {
+        return 0;
+    }
+
+    if (PEntity->objtype != TYPE_PC)
+    {
+        return PWeapon->getDamage();
+    }
+
+    return static_cast<uint16>(gear_sync::syncScale(PWeapon->getDamage(), itemutils::gearSyncLevel(), PWeapon->getReqLvl()));
+}
+
+// XI: Forever Offline (gear sync): the same for a mod read straight off a weapon (DMG_RATING). Player characters only.
+auto GetSyncedRawModifier(const CBattleEntity* PEntity, const CItemEquipment* PItem, xi::Mod mod) -> int16
+{
+    if (PEntity == nullptr || PItem == nullptr)
+    {
+        return 0;
+    }
+
+    if (PEntity->objtype != TYPE_PC)
+    {
+        return PItem->getModifier(mod);
+    }
+
+    return static_cast<int16>(GetSyncedModAmount(PItem, mod, PItem->getModifier(mod)));
+}
+
+// XI: Forever Offline (gear sync): an item level bonus (ilvl skill, parry, magic accuracy). The eras gear sync is built for
+// have no item level, so a synced item (above map.GEAR_SYNC_LEVEL) gives 0. Everything else is the stock bonus.
+auto GetSyncedILvlBonus(const CBattleEntity* PEntity, const CItemEquipment* PItem, uint16 stockBonus) -> uint16
+{
+    if (PEntity == nullptr || PItem == nullptr || PEntity->objtype != TYPE_PC)
+    {
+        return stockBonus;
+    }
+
+    return gear_sync::syncApplies(itemutils::gearSyncLevel(), PItem->getReqLvl()) ? 0 : stockBonus;
 }
 
 auto GetSpikesDamageType(const ActionReactKind spikesType) -> xi::DamageType

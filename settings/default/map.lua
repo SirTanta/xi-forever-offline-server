@@ -91,6 +91,13 @@ xi.settings.map =
     -- Disables ability to equip higher level gear when level cap/sync effect is on player.
     DISABLE_GEAR_SCALING = false,
 
+    -- Gear sync (XI: Forever Offline). 0 = off, stock behaviour. Above 0 (an era's level cap, e.g. 75), gear whose level is
+    -- above it can still be worn, as if it were that level: every mod, DEF and weapon damage are scaled by
+    -- GEAR_SYNC_LEVEL / item level (rounded toward zero, at least 1 for a positive mod), delay is unchanged, item level
+    -- (ilvl) bonuses count as 0, and latents and the hit count use GEAR_SYNC_LEVEL as the item's level.
+    -- Takes effect on the next equip or login: mods already applied are not recalculated.
+    GEAR_SYNC_LEVEL = 0,
+
     -- Disables Treasure Hunter procs (Era behavior wants this true)
     DISABLE_TREASURE_HUNTER_PROCS = false,
 
