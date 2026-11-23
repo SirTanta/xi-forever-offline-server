@@ -1492,36 +1492,6 @@ auto squadOwnerMerit(CLuaBaseEntity* player, const uint16 meritId) -> int32
     return static_cast<int32>(ownerMeritCount(PChar, meritId));
 }
 
-// (Gambits v2 U13) A squad mate may use a job ability only as a player could (charutils::BuildingCharAbilityTable and
-// CheckAbilityAddtype; the trust engine checks none of this for a trust): its main job at the level, or its sub job at the
-// sub level but never a level-0 (two-hour) or ADDTYPE_MAIN_ONLY ability; never a pet ability or the pet command menu;
-// and a merit ability only when the mate's OWNER (its master) has that merit unlocked. The same rules as
-// squad_ability_rules.lua. Other player conditions (learned rolls, pets present, Arts) are not applied here.
-auto squadMateMayUse(CTrustEntity* PTrust, CAbility* PAbility) -> bool
-{
-    if (PTrust == nullptr || PAbility == nullptr || PAbility->getID() >= ABILITY_HEALING_RUBY || PAbility->getID() == ABILITY_PET_COMMANDS)
-    {
-        return false;
-    }
-
-    const xi::Job job     = PAbility->getJob();
-    const uint8   level   = PAbility->getLevel();
-    const uint16  addType = PAbility->getAddType();
-    const bool    asMain  = PTrust->GetMJob() == job && PTrust->GetMLevel() >= level;
-    const bool    asSub   = PTrust->GetSJob() == job && PTrust->GetSLevel() >= level && level != 0 && !(addType & ADDTYPE_MAIN_ONLY);
-    if (!asMain && !asSub)
-    {
-        return false;
-    }
-
-    if (addType & ADDTYPE_MERIT)
-    {
-        return ownerMeritCount(dynamic_cast<CCharEntity*>(PTrust->PMaster), PAbility->getMeritModID()) > 0;
-    }
-
-    return true;
-}
-
 // Asks one squad mate to use a job ability: self abilities on themselves, enemy abilities on your enemy, the rest on you
 auto trySquadAbility(CCharEntity* PChar, CTrustEntity* PTrust, CAbility* PAbility) -> SpellCastResult
 {
@@ -1530,17 +1500,8 @@ auto trySquadAbility(CCharEntity* PChar, CTrustEntity* PTrust, CAbility* PAbilit
         return SpellCastResult::Unknown;
     }
 
-    // (Gambits v2 U13) the player rules: main-job-only and two-hour abilities, pet abilities, the owner's merits
-    if (!squadMateMayUse(PTrust, PAbility))
-    {
-        return SpellCastResult::Unknown;
-    }
-
-    // a 2-hour ability belongs to the main job only, never the support job (sparkiie: a WAR/MNK used Hundred Fists)
-    if (PAbility == ability::GetTwoHourAbility(PAbility->getJob()) && PTrust->GetMJob() != PAbility->getJob())
-    {
-        return SpellCastResult::Unknown;
-    }
+    // Thin C++ step 2: the player rules (main job and level, sub job, never a pet or two hour ability as the sub job, the owner's merits)
+    // are SQ_LOGIC.mayUse in sq_logic.lua, checked in Lua before this function is reached (SquadTryAbility and SquadUseAbility there).
 
     const uint16   valid   = PAbility->getValidTarget();
     CBattleEntity* PTarget = nullptr;
@@ -1917,13 +1878,13 @@ class SquadModule : public CPPModule
         ShowInfo("[SQUAD] Loaded trust templates for %zu jobs", jobTemplates.size());
 
         ::lua.set_function("SpawnSquadMate", spawnSquadMate);
-        ::lua.set_function("SquadUseAbility", squadUseAbility);
+        ::lua.set_function("SquadUseAbilityRaw", squadUseAbility);
         ::lua.set_function("SquadSpellIdByName", squadSpellIdByName);       // thin C++ step 1 (squad_logic.lua)
         ::lua.set_function("SquadAbilityIdByName", squadAbilityIdByName);
         ::lua.set_function("SquadAbilityName", squadAbilityName);
         ::lua.set_function("SquadTwoHourAbilityId", squadTwoHourAbilityId);
         ::lua.set_function("SquadCastSpell", squadCastSpell);
-        ::lua.set_function("SquadTryAbility", squadTryAbility);
+        ::lua.set_function("SquadTryAbilityRaw", squadTryAbility);
         ::lua.set_function("GetSquad", getSquad);
         ::lua.set_function("SaveSquadMate", saveSquadMate);
         ::lua.set_function("SetSquadJob", setSquadJob);
