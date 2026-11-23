@@ -2549,7 +2549,28 @@ void CCharEntity::Die(timer::duration _duration, DeathParams params)
 {
     TracyZoneScopedN("CCharEntity::Die");
 
-    this->ClearTrusts();
+    // XI: Forever Offline: a squad mate outlives her master's KO and stands by (she can Raise him, he can be Raised by her or by a party member). A retail trust
+    // (no squad record) goes as in stock. Her own rows keep running; zoning, leaving the party and a charm still clear everything as before.
+    if (std::ranges::none_of(PTrusts, [](const CTrustEntity* PTrust) { return IsSquadMate(PTrust); }))
+    {
+        this->ClearTrusts();
+    }
+    else
+    {
+        for (auto it = PTrusts.begin(); it != PTrusts.end();)
+        {
+            if (IsSquadMate(*it))
+            {
+                ++it;
+                continue;
+            }
+
+            (*it)->PAI->Despawn();
+            it = PTrusts.erase(it);
+        }
+
+        ReloadPartyInc();
+    }
 
     if (StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Weakness))
     {
