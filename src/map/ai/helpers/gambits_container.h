@@ -26,6 +26,8 @@
 
 #include <common/types/hash_map.h>
 
+#include "gambits_backoff.h"
+
 #include "ai/ai_container.h"
 #include "ai/controllers/trust_controller.h"
 #include "entities/char_entity.h"
@@ -351,6 +353,9 @@ private:
     std::vector<Gambit_t> gambits;
 
     HashMap<std::string, timer::time_point> m_timerConditionLastTrigger;
+
+    // XI: Forever Offline: area rules that keep acting on a member they do not reach rest for a while (gambits_backoff.h)
+    backoff::Guard m_AreaGuard;
 
     std::set<xi::Job> melee_jobs = {
         xi::Job::WAR,

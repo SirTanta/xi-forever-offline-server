@@ -552,6 +552,11 @@ local function eatIfNeeded(mob)
     end
 end
 
+-- (v0.3.3, G14) "feed us" in party chat (squad_requests.lua): let a mate eat now if it is not eating, by the same rules as every combat tick
+xi = xi or {}
+xi.squad = xi.squad or {}
+xi.squad.eatNow = eatIfNeeded
+
 -- WAR MNK WHM BLM RDM THF (job ids 1-6) are available from the start. The other jobs are advanced jobs and
 -- only work for squad mates once your character has unlocked them (like the job unlock quests in the game).
 local STARTER_JOB_MAX = 6
@@ -2147,6 +2152,11 @@ xi.squad.onPartyChat = function(player, text)
         return
     end
 
+    -- (v0.3.3, G19) a request a squad mate just took ("sneak me") is an order, not conversation: the helper does not answer it a second time
+    if xi.squad.lineTaken ~= nil and xi.squad.lineTaken(player, text) then
+        return
+    end
+
     text = chatClean(text)
     if text == '' then
         return
@@ -2525,17 +2535,9 @@ local function callMate(player, mate)
     -- (2026-11-19, Meli, lilibun: synced mates came out naked and unarmed) under a Level Sync a piece above the synced
     -- level used to be left off entirely. Now: weapons and ammo (slots 0-3) stay on, so the mate can fight and use
     -- weapon skills; armour above the level gives no stats but still shows (as a look), unless a lockstyle is set there.
-    local outfit = {}
-    local looks = squadLockstyleGet(player, mate.id)
-    for slot, itemId in pairs(mate.equip[mate.mjob]) do
-        if slot ~= STARTER_MARK then
-            if not synced or itemLevel(itemId) <= main or (type(slot) == 'number' and slot <= 3) then
-                outfit[slot] = itemId
-            elseif SQUAD_LS_SLOTS[slot] and looks[slot] == nil then
-                looks[slot] = itemId
-            end
-        end
-    end
+    local outfit, looks = require('modules/custom/lua/squad_equipment').projectSpawnGear(
+        mate.equip[mate.mjob], squadLockstyleGet(player, mate.id), main, synced,
+        itemLevel, SQUAD_LS_SLOTS, STARTER_MARK)
 
     local okFix, _, fixed = pcall(function() return squadOutfitFix(outfit) end)
     if okFix and fixed then
@@ -2642,10 +2644,18 @@ local function callMate(player, mate)
             resyncSquad(mobArg)
         end
         -- (Jon Tanta, 2026-11-21) SQUAD_IDLE (trust_controller.cpp): a mate the player has stopped gets no built-in Thief positioning
-        if squadThiefTick ~= nil and mobArg:getLocalVar('SQUAD_IDLE') == 0 and mobArg:isAlive() and mobArg:getMaster() ~= nil then
+        if squadThiefTick ~= nil and mobArg:getLocalVar('ADDON_OWNED') == 0 and mobArg:getLocalVar('SQUAD_IDLE') == 0 and mobArg:isAlive() and mobArg:getMaster() ~= nil then
             pcall(squadThiefTick, mobArg)
         end
-        squadTeamTick(mobArg) -- (spacing and the skillchain wait, once a second)
+        -- SQUAD_SEAM v2 begin sr_tick
+        if type(rawget(_G, 'SQUAD_PROFILE')) == 'table' and type(SQUAD_PROFILE.tick) == 'function' then
+            pcall(SQUAD_PROFILE.tick, mobArg)
+        end
+        -- SQUAD_SEAM v2 end sr_tick
+        -- SQUAD_SEAM v1 (team tick): an add-on owns this mate, so Squads' spacing (TRUST_DISTANCE), chain and ext chain stay off it
+        if mobArg:getLocalVar('ADDON_OWNED') == 0 then
+            squadTeamTick(mobArg) -- (spacing and the skillchain wait, once a second)
+        end
         chatTick(mobArg)
         if type(xi.squad.pack) == 'table' then
             pcall(xi.squad.pack.tick, mobArg) -- (pack lines: fights and quiet moments while the AI is quiet)
@@ -3471,6 +3481,15 @@ commandObj.onTrigger = function(player, action, arg1, arg2, arg3, arg4, arg5, ar
         return
     end
 
+    -- SQUAD_SEAM v2 begin sr_command
+    if (action == 'profile' or action == 'export' or action == 'version') and type(rawget(_G, 'SQUAD_PROFILE')) == 'table'
+        and type(SQUAD_PROFILE.command) == 'function' then
+        local okSr, handledSr = pcall(SQUAD_PROFILE.command, player, squad, action, arg1, arg2, arg3, arg4, arg5,
+            { say = say, findMate = findMate, jobNames = jobNames, summonedMate = summonedMate,
+              dev = function(a, x, y, z) return SQUAD_DEV_CMD(player, a, x, y, z) end })
+        if okSr and handledSr then return end
+    end
+    -- SQUAD_SEAM v2 end sr_command
     if action == 'panel' then
         -- For the in-game Squad panel addon, which reads these lines and hides them from the chat log:
         --   squadpanel:<slot>|<name>|<main job>|<main level>|<sub job or ->|<sub level>|<role>|<mode>|<1 if the mate is out now>|<switch mask>
@@ -3554,6 +3573,12 @@ commandObj.onTrigger = function(player, action, arg1, arg2, arg3, arg4, arg5, ar
                 player:getCharVar('SQUAD_WSTP_' .. mate.id), chosen > 0 and wsName(chosen):gsub(' ', '_') or '-',
                 player:getCharVar('SQUAD_RANGE_' .. mate.id), wsList))
         end
+        -- The addon channel (packets/c2s/0x1f0_addon_channel.h): when this build handles it, say so, so a window may send its commands as that packet
+        -- instead of as chat lines. A build without the packet has no xi.addonChannel and says nothing, so the window keeps typing.
+        if type(xi.addonChannel) == 'table' then
+            say(player, 'squadpanel:chan|' .. tostring(xi.addonChannel.version))
+        end
+
         -- (servermenu 1.8) what the puller goes for, and the kinds of monster around the camp
         if c then
             say(player, 'squadpanel:campwant|' .. (c.want or '-'))
@@ -3562,6 +3587,11 @@ commandObj.onTrigger = function(player, action, arg1, arg2, arg3, arg4, arg5, ar
             end
         end
 
+        -- SQUAD_SEAM v2 begin sr_panel
+        if type(rawget(_G, 'SQUAD_PROFILE')) == 'table' and type(SQUAD_PROFILE.panelLines) == 'function' then
+            pcall(SQUAD_PROFILE.panelLines, player, squad, say)
+        end
+        -- SQUAD_SEAM v2 end sr_panel
         say(player, 'squadpanel:end')
         return
     end
@@ -4028,20 +4058,43 @@ commandObj.onTrigger = function(player, action, arg1, arg2, arg3, arg4, arg5, ar
     -- The Squad menu's "Apply now": the mates who are out come back with their new settings (no cooldown)
     if action == 'reapply' then
         local out = {}
+        -- SQUAD_SEAM v1 (reapply gate): Apply now never dismisses, calls or applies a Rule Set to a mate an add-on owns
+        local addonSkipped = {}
         for _, mate in ipairs(orderedSquad(player, squad)) do
             if isSummoned(player, mate.id) then
-                out[#out + 1] = mate
+                local addonOk, addonOwned = false, false
+                if type(rawget(_G, 'ADDON_OWNER')) == 'table' and type(ADDON_OWNER.owns) == 'function' then
+                    addonOk, addonOwned = pcall(ADDON_OWNER.owns, player, summonedMate(player, mate.id))
+                end
+                if addonOk and addonOwned == true then
+                    addonSkipped[#addonSkipped + 1] = mate
+                else
+                    out[#out + 1] = mate
+                end
             end
         end
 
-        player:clearTrusts()
+        if #addonSkipped == 0 then
+            player:clearTrusts()
+        else
+            -- only the mates an add-on does not own leave and come back (one by one); without SquadDismissMate they stay as they are
+            for _, mate in ipairs(addonSkipped) do
+                say(player, string.format('An add-on owns %s: Squads reapply skipped', mate.name))
+            end
+            local addonKept = {}
+            for _, mate in ipairs(out) do
+                local addonTrust = summonedMate(player, mate.id)
+                if addonTrust ~= nil and SquadDismissMate ~= nil and SquadDismissMate(addonTrust) then addonKept[#addonKept + 1] = mate end
+            end
+            out = addonKept
+        end
         for index, mate in ipairs(out) do
             player:timer(RECALL_WAIT_MS + (index - 1) * CALL_GAP_MS, function(entity)
                 callMate(entity, mate)
             end)
         end
 
-        if #out == 0 then
+        if #out == 0 and #addonSkipped == 0 then
             say(player, 'None of your squad mates are out.')
         end
 
@@ -5403,6 +5456,13 @@ local function addGambit(mob, target, condition, action, retry)
         condition = adjusted
     end
 
+    -- SQUAD_SEAM v2 begin sr_gambit
+    if type(rawget(_G, 'SQUAD_PROFILE')) == 'table' and type(SQUAD_PROFILE.filter_rule) == 'function' then
+        local okSr, keepSr, condSr = pcall(SQUAD_PROFILE.filter_rule, mob, target, condition, action)
+        if okSr and keepSr == false then return end
+        if okSr and condSr ~= nil then condition = condSr end
+    end
+    -- SQUAD_SEAM v2 end sr_gambit
     if retry ~= nil then
         mob:addGambit(target, condition, action, retry)
     else
@@ -6059,10 +6119,29 @@ end
 local function squadSpawn(mob)
     local main = jobs[mob:getMainJob()]
     if main == nil then
+        -- SQUAD_SEAM v1 (spawn_norules): a job Squads has no rules for (SCH, DNC, RUN, GEO ...) is still marked owned when an add-on owns the mate
+        local addonMasterNoRules = mob:getMaster()
+        if addonMasterNoRules ~= nil and mob:getLocalVar('SQUAD_ID') ~= 0 and (addonMasterNoRules:getCharVar('ADDON_OWN_' .. mob:getLocalVar('SQUAD_ID')) or 0) > 0 then
+            mob:setLocalVar('ADDON_OWNED', 1)
+            return true
+        end
+
         return false
     end
 
+    -- SQUAD_SEAM v1 (spawn): an add-on owns this mate (charvar ADDON_OWN_<slot> > 0 on its master): Squads builds nothing for it
+    local addonMaster = mob:getMaster()
+    if addonMaster ~= nil and mob:getLocalVar('SQUAD_ID') ~= 0 and (addonMaster:getCharVar('ADDON_OWN_' .. mob:getLocalVar('SQUAD_ID')) or 0) > 0 then
+        mob:setLocalVar('ADDON_OWNED', 1)
+        return true
+    end
+
     local role, mode = behaviorOf(mob)
+    -- SQUAD_SEAM v2 begin sr_spawn
+    if type(rawget(_G, 'SQUAD_PROFILE')) == 'table' and type(SQUAD_PROFILE.onSpawn) == 'function' then
+        pcall(SQUAD_PROFILE.onSpawn, mob)
+    end
+    -- SQUAD_SEAM v2 end sr_spawn
     local switches = switchesForMob(mob)
     activeBehavior = { role = role, mode = mode }
     activeSwitches = switches
@@ -6723,5 +6802,16 @@ if commandObj ~= nil and commandObj.onTrigger ~= nil then
         end
     end
 end
+
+-- SQUAD_SEAM v2 begin sr_handshake
+-- set once, only after the whole file loaded; the profile layer and the window read it to know the hooks survived
+SQUAD_SEAM = { version = 2, owners = { base = 0, profile = 1, advanced = 2 }, base = 'v1.15' }
+-- the dev handler for the profile layer, reached by a global: the command function is at the engine's limit of 60 upvalues,
+-- so the hook inside it must not name `commandObj` (it would be one more)
+SQUAD_DEV_CMD = function(...) return commandObj.onTrigger(...) end
+-- SQUAD_SEAM v2 end sr_handshake
+
+-- SQUAD_SEAM v1 (handshake): set once, only after the whole file loaded; an add-on reads it to know its hooks survived
+SQUAD_SEAM_V1 = { version = 1 }
 
 return m

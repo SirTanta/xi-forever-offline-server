@@ -23,6 +23,7 @@
 #include "gambits_reach.h"
 
 #include "ability.h"
+#include "common/settings.h"
 #include "ai/states/ability_state.h"
 #include "ai/states/magic_state.h"
 #include "ai/states/mobskill_state.h"
@@ -134,15 +135,28 @@ auto nowSeconds() -> uint32
     return static_cast<uint32>(std::time(nullptr)); // (the epoch Lua's os.time() uses: squad.lua reads and writes these)
 }
 
-// XI: Forever Offline (Squad healer range, see gambits_reach.h): the spell a rule made only of spells will cast, when it
-// is known before a target is chosen (a specific spell, or the best of a family), as the reach it gives the rule.
-// Anything else - a job ability, a ranged attack, a spell picked against the target - gives no reach (the inherited 15).
-auto RuleSpellReach(CTrustEntity* POwner, const Gambit_t& gambit) -> std::optional<reach::SpellReach>
+// XI: Forever Offline: map.TRUST_AOE_RANGE (settings/default/map.lua). 'retail' (the default) = a party area effect reaches
+// only the members inside its radius, so the party rules below pick only members it can reach. 'extended' = the stock server
+// (trusts and pets are always covered), where every rule keeps the reach it had before.
+auto TrustAoeRetail() -> bool
 {
-    const Action_t* first = nullptr;
+    return settings::get<std::string>("map.TRUST_AOE_RANGE") != "extended";
+}
+
+// XI: Forever Offline (Squad healer range, see gambits_reach.h): the spell or ability a rule will use, when it is known
+// before a target is chosen (a specific spell, or the best of a family), as the reach it gives the rule. A rule made only of
+// spells, or only of job abilities, counts; a spell picked against the target, a ranged attack or a mix gives no reach (the
+// inherited 15). Songs and job abilities with an area only count when the area reach is retail (areaRetail).
+auto RuleSpellReach(CTrustEntity* POwner, const Gambit_t& gambit, const bool areaRetail) -> std::optional<reach::SpellReach>
+{
+    const Action_t* first       = nullptr;
+    bool            allSpells   = true;
+    bool            allAbility  = true;
     for (const auto& action : gambit.actions)
     {
-        if (action.reaction != G_REACTION::MA)
+        allSpells  = allSpells && action.reaction == G_REACTION::MA;
+        allAbility = allAbility && action.reaction == G_REACTION::JA;
+        if (!allSpells && !allAbility)
         {
             return std::nullopt;
         }
@@ -153,7 +167,24 @@ auto RuleSpellReach(CTrustEntity* POwner, const Gambit_t& gambit) -> std::option
         }
     }
 
-    if (first == nullptr || POwner->SpellContainer == nullptr)
+    if (first == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    if (allAbility)
+    {
+        // A job ability used on oneself with an area (the Corsair rolls, Warcry ...): its radius is its reach
+        if (!areaRetail || first->select != G_SELECT::SPECIFIC)
+        {
+            return std::nullopt;
+        }
+
+        const auto* PAbility = ability::GetAbility(first->select_arg);
+        return PAbility != nullptr ? reach::FromAbilityData(PAbility->getValidTarget(), static_cast<float>(PAbility->getRadius())) : std::nullopt;
+    }
+
+    if (POwner->SpellContainer == nullptr)
     {
         return std::nullopt;
     }
@@ -174,10 +205,17 @@ auto RuleSpellReach(CTrustEntity* POwner, const Gambit_t& gambit) -> std::option
         return std::nullopt;
     }
 
+    // (a song fell back to the inherited 15 yalms in the stock server: it keeps that when the area reach is extended)
+    if (!areaRetail && PSpell->getSpellGroup() == SPELLGROUP_SONG)
+    {
+        return std::nullopt;
+    }
+
     return reach::FromSpellData(PSpell->getValidTarget(), PSpell->getRange(), PSpell->getRadius());
 }
 
-static_assert(reach::TargetSelf == TARGET_SELF && reach::TargetPlayerParty == TARGET_PLAYER_PARTY);
+static_assert(reach::TargetSelf == TARGET_SELF && reach::TargetPlayerParty == TARGET_PLAYER_PARTY && reach::TargetEnemy == TARGET_ENEMY &&
+              reach::TargetPlayerPartyPianissimo == TARGET_PLAYER_PARTY_PIANISSIMO);
 
 } // namespace
 
@@ -254,6 +292,7 @@ void CGambitsContainer::RemoveAllGambits()
 {
     gambits.clear();
     m_timerConditionLastTrigger.clear();
+    m_AreaGuard.Clear();
 }
 
 auto CGambitsContainer::Tick(timer::time_point tick) -> Task<void>
@@ -283,13 +322,18 @@ auto CGambitsContainer::Tick(timer::time_point tick) -> Task<void>
 
     // Deal with TP skills before any gambits
     // TODO: Should this be its own special gambit?
-    if (POwner->health.tp >= 1000 && TryTrustSkill())
+    // XI: Forever Offline: a script can hold the stock weapon skills (trust_hold.h); the gambits below still run
+    if (POwner->health.tp >= 1000 && !controller->ScriptHolds(trust_hold::HoldWeaponSkill) && TryTrustSkill())
     {
         co_return;
     }
 
     // XI: Forever Offline (Squad healer range): squad mates' spell rules reach party members as far as the spell does
     const bool squadMate = POwner->GetLocalVar("SQUAD_ID") != 0;
+
+    // XI: Forever Offline: the area reach of party effects (map.TRUST_AOE_RANGE) and the clock the rest of a rule counts in
+    const bool    areaRetail = TrustAoeRetail();
+    const int64_t nowMs      = std::chrono::duration_cast<std::chrono::milliseconds>(tick.time_since_epoch()).count();
 
     // Didn't WS/MS, go for other Gambits
     for (auto& gambit : gambits)
@@ -299,17 +343,33 @@ auto CGambitsContainer::Tick(timer::time_point tick) -> Task<void>
             continue;
         }
 
-        const auto ruleSpell = squadMate ? RuleSpellReach(POwner, gambit) : std::nullopt;
+        // (other trusts only need the reach under the retail area range; squad mates always had it)
+        const auto ruleSpell = (squadMate || areaRetail) ? RuleSpellReach(POwner, gambit, areaRetail) : std::nullopt;
 
-        auto isValidMember = [this, squadMate, &ruleSpell](CBattleEntity* PSettableTarget, CBattleEntity* PPartyTarget)
+        // XI: Forever Offline: a rule that spreads an area effect from its caster (Protectra, a song, a roll) and keeps acting on
+        // a member the area does not reach rests for that member (gambits_backoff.h). Only under the retail area range:
+        // the stock server's trusts are always covered, so such a rule always converges there.
+        const bool areaRule = areaRetail && ruleSpell.has_value() && ruleSpell->selfOnly && ruleSpell->radius > 0.0f;
+
+        auto isValidMember = [this, squadMate, areaRule, nowMs, &ruleSpell, &gambit](CBattleEntity* PSettableTarget, CBattleEntity* PPartyTarget)
         {
             if (PSettableTarget || !PPartyTarget->isAlive() || POwner->loc.zone != PPartyTarget->loc.zone)
             {
                 return false;
             }
 
+            if (areaRule && m_AreaGuard.Blocked(gambit.identifier, PPartyTarget->id, nowMs))
+            {
+                return false;
+            }
+
             if (!squadMate)
             {
+                if (ruleSpell.has_value())
+                {
+                    return reach::WithinReach(POwner->loc.p, PPartyTarget->loc.p, reach::TrustPartyReach(ruleSpell)); // (an area effect on oneself: its radius)
+                }
+
                 return distance(POwner->loc.p, PPartyTarget->loc.p) <= 15.0f; // (other trusts: unchanged)
             }
 
@@ -1183,6 +1243,12 @@ auto CGambitsContainer::Tick(timer::time_point tick) -> Task<void>
                     executedAnyAction = true;
                 }
             }
+        }
+
+        // XI: Forever Offline: count what an area rule did to this member (see areaRule above)
+        if (executedAnyAction && areaRule && target != nullptr)
+        {
+            m_AreaGuard.Record(gambit.identifier, target->id, nowMs);
         }
 
         // If we executed any action and the gambit has a retry_delay, set last_used
