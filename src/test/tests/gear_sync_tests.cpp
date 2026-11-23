@@ -129,7 +129,7 @@ TEST_CASE("S2: a sync level never raises an amount", "[gear_sync]")
             {
                 const auto scaled = gear_sync::syncScale(amount, syncLevel, itemLevel);
                 REQUIRE(std::abs(scaled) <= std::abs(amount));
-                REQUIRE((scaled >= 0) == (amount >= 0) || scaled == 0);
+                REQUIRE(((scaled >= 0) == (amount >= 0) || scaled == 0));
                 if (amount > 0)
                 {
                     REQUIRE(scaled >= 1);
