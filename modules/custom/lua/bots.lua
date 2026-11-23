@@ -716,9 +716,34 @@ local function noticeChanges(bot, st)
     end
 end
 
+-- (bench, experimental, off unless the env var is set) SM_PROF times every think; SM_IDLE slows the think of an idle town bot;
+local smProf = os.getenv('SM_PROF')
+local smIdle -- idle_think_ms (bots_config.lua) or SM_IDLE: how often a bot with nothing to do in town thinks (nil = every second, as before)
+local function idleMs()
+    if smIdle == nil then
+        smIdle = (xi.lod and xi.lod.opt and tonumber(xi.lod.opt('idle_think_ms', 'SM_IDLE'))) or false
+    end
+
+    return smIdle
+end
 local function schedule(bot, token)
-    bot:timer(THINK_MS, function(b)
-        think(b, token)
+    local ms = THINK_MS
+    if idleMs() then
+        local st = state[bot:getID()]
+        if st and st.idleMark and os.time() - st.idleMark <= 1 and st.idleSlow then
+            ms = smIdle
+        end
+    end
+
+    bot:timer(ms, function(b)
+        if smProf and xi.lod then
+            local a = xi.lod.qpc()
+            think(b, token)
+            xi.lod.prof.think_ms = xi.lod.prof.think_ms + (xi.lod.qpc() - a)
+            xi.lod.prof.think_n = xi.lod.prof.think_n + 1
+        else
+            think(b, token)
+        end
     end)
 end
 

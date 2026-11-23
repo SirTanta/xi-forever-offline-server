@@ -11,6 +11,27 @@
 -----------------------------------
 local L = {}
 
+-- (bench, experimental) the roster calls go through xi.lod when br_lod.lua is active (it counts dormant bots as online, caches BotList)
+local function rawBotList(...) return _G.BotList(...) end
+local function rawBotLogin(...) return _G.BotLogin(...) end
+local function rawBotLogout(...) return _G.BotLogout(...) end
+local function rawBotCreate(...) return _G.BotCreate(...) end
+local function BotList(...)
+    return ((xi.lod and xi.lod.BotList) or rawBotList)(...)
+end
+
+local function BotLogin(...)
+    return ((xi.lod and xi.lod.BotLogin) or rawBotLogin)(...)
+end
+
+local function BotLogout(...)
+    return ((xi.lod and xi.lod.BotLogout) or rawBotLogout)(...)
+end
+
+local function BotCreate(...)
+    return ((xi.lod and xi.lod.BotCreate) or rawBotCreate)(...)
+end
+
 local CONFIG_PATH = 'modules/custom/lua/bots_config'
 local DATA_PATH   = 'modules/custom/lua/crowds_data'
 
@@ -564,6 +585,39 @@ end
 -----------------------------------
 -- town life: what a bot does when it is not in a party with you (called from its brain, once a second)
 -----------------------------------
+local smSnap = nil -- zone_snapshot (bots_config.lua) or SM_SNAP, read at first use (br_lod.lua loads after this file)
+local function snapOn()
+    if smSnap == nil then
+        smSnap = (xi.lod and xi.lod.opt and xi.lod.opt('zone_snapshot', 'SM_SNAP')) or false
+    end
+
+    return smSnap
+end
+local snapT, snapZ = -1, {}
+-- (bench, experimental, SM_SNAP) one list of the real players per zone and second, shared by every idle bot (the old code built it per bot and second)
+local function realSnapshot(zone)
+    local t = os.time()
+    if t ~= snapT then
+        snapT, snapZ = t, {}
+    end
+
+    local zid = zone:getID()
+    local list = snapZ[zid]
+    if not list then
+        list = {}
+        for _, p in ipairs(zone:getPlayers()) do
+            if not BotIsBot(p:getID()) then
+                local pp = p:getPos()
+                list[#list + 1] = { p = p, x = pp.x, z = pp.z }
+            end
+        end
+
+        snapZ[zid] = list
+    end
+
+    return list
+end
+
 local function nearestRealPlayer(bot, range)
     local zone = bot:getZone()
     if not zone then
@@ -571,6 +625,18 @@ local function nearestRealPlayer(bot, range)
     end
 
     local pos = bot:getPos()
+    if snapOn() then
+        local best, bestD = nil, range * range
+        for _, e in ipairs(realSnapshot(zone)) do
+            local d = (e.x - pos.x) ^ 2 + (e.z - pos.z) ^ 2
+            if d <= bestD then
+                best, bestD = e.p, d
+            end
+        end
+
+        return best
+    end
+
     local best, bestD = nil, range * range
     for _, p in ipairs(zone:getPlayers()) do
         if not BotIsBot(p:getID()) then
@@ -623,6 +689,8 @@ end
 function L.idle(bot, st)
     local id = bot:getID()
     local t = now()
+    st.idleMark = t -- (bench: the brain slows down while this is set; see bots.lua schedule)
+    st.idleSlow = true
     local life = st.life
     if not life then
         life = { phase = 'choose', at = t + rnd(2, 8) }

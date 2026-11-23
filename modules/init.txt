@@ -186,6 +186,7 @@ custom/lua/crowds.lua
 custom/cpp/bots.cpp
 
 custom/lua/bots.lua
+custom/lua/br_lod.lua
 # Gambits Revamped (guards v1): the engine loads after squad_bard_walk (it reads the Squads state those files set up)
 custom/lua/gambits_own.lua
 # Loaded LAST: overrides here win over the era/phoenix folders above (fast travel overrides the Survival Guide menu)
