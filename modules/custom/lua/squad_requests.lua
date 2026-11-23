@@ -325,6 +325,17 @@ xi.squad.requestClaim = function(player, spellId, target)
     end
 end
 
+-- the same request is on its way for this person when any tier of the family is claimed on them
+function R.takenFamily(player, unit)
+    for _, tier in ipairs(unit.tiers) do
+        if R.taken(player, tier.id, unit.target) then
+            return true
+        end
+    end
+
+    return false
+end
+
 -- squad_logic.lua hands a spell request over: the mates it asks (in order), "all", the spell, the named target (or nil = you).
 -- Returns true when the request was answered here, false to let squad_logic.lua run the old loop.
 function R.cast(player, askedMates, everyone, spellId, spellName, named, text)
@@ -720,17 +731,52 @@ local function finish(req)
     end
 end
 
--- one try at one unit: the mates in order; true when a cast was accepted
+-----------------------------------
+-- G7 (extra): the best spell she can cast
+-- "cure", "protect", "haste" were the first tier even at level 75 (Cure I, Protect I). Without a tier word, every tier is asked best first and
+-- the first one she has learned and can pay for is cast: a mate that cannot afford Cure IV casts Cure III. A tier word ("cure ii") is that tier only.
+-----------------------------------
+-- the spells of a family to ask, best first: { { id = n, name = 'cure_iv' }, ... }
+local function tierList(fam, tier)
+    local out = {}
+    local first, last = #fam.spells, 1
+    if tier ~= nil then
+        first, last = tier, tier
+    end
+
+    for n = first, last, -1 do
+        local name = fam.spells[n]
+        local id = name ~= nil and spellIdOf(name) or nil
+        if id ~= nil then
+            out[#out + 1] = { id = id, name = name:lower() }
+        end
+    end
+
+    return out
+end
+
+-- one try at one unit: the mates in order, every tier best first; 'cast' (and who, and which spell), 'busy', or 'failed' (and why)
 local function tryUnit(req, unit)
     local sawBusy, worst, worstMate = false, 'unknown', nil
     for _, mate in ipairs(req.asked) do
-        local result = SquadCastSpell(req.player, mate, unit.id, unit.named)
-        if result == 'cast' then
-            return 'cast', mate
-        elseif result == 'busy' then
-            sawBusy = true
-        elseif rank(result) > rank(worst) or worstMate == nil then
-            worst, worstMate = result, mate
+        local mateWorst = 'unknown'
+        for _, tier in ipairs(unit.tiers) do
+            local result = SquadCastSpell(req.player, mate, tier.id, unit.named)
+            if result == 'cast' then
+                return 'cast', mate, tier
+            elseif result == 'busy' then
+                sawBusy = true
+                break -- she is casting: no other tier changes that
+            elseif result == 'notarget' then
+                mateWorst = 'notarget'
+                break
+            elseif rank(result) > rank(mateWorst) then
+                mateWorst = result -- not enough MP or recasting: the next tier down may still work
+            end
+        end
+
+        if rank(mateWorst) > rank(worst) or worstMate == nil then
+            worst, worstMate = mateWorst, mate
         end
     end
 
@@ -745,12 +791,12 @@ local function step(req)
     local waiting = false
     for _, unit in ipairs(req.units) do
         if unit.state == 'pending' then
-            if R.taken(req.player, unit.id, unit.target) then
+            if R.takenFamily(req.player, unit) then
                 unit.state = 'taken'
             else
                 local result, a, b = tryUnit(req, unit)
                 if result == 'cast' then
-                    unit.state = 'casting'
+                    unit.state, unit.id, unit.spellName = 'casting', b.id, b.name
                     R.claim(req.player, unit.id, unit.target)
                     R.markLine(req.player, req.text)
                     if not req.acked then
@@ -820,13 +866,13 @@ function R.run(player, mates, intent, text, d)
             add(member)
         end
 
-        local name = fam.spells[intent.tiers[key] or 1]
-        local id = name ~= nil and spellIdOf(name) or nil
-        if id ~= nil then
+        local tiers = tierList(fam, intent.tiers[key])
+        if #tiers > 0 then
             for _, target in ipairs(targets) do
                 if #req.units < R.MAX_UNITS then
                     req.units[#req.units + 1] = {
-                        fam = key, id = id, spellName = name:lower(), target = target, named = idOf(target) ~= idOf(player) and target or nil, state = 'pending',
+                        fam = key, tiers = tiers, id = tiers[1].id, spellName = tiers[1].name, target = target,
+                        named = idOf(target) ~= idOf(player) and target or nil, state = 'pending',
                     }
                 end
             end
