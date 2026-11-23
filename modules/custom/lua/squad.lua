@@ -2462,17 +2462,9 @@ local function callMate(player, mate)
     -- (2026-11-19, Meli, lilibun: synced mates came out naked and unarmed) under a Level Sync a piece above the synced
     -- level used to be left off entirely. Now: weapons and ammo (slots 0-3) stay on, so the mate can fight and use
     -- weapon skills; armour above the level gives no stats but still shows (as a look), unless a lockstyle is set there.
-    local outfit = {}
-    local looks = squadLockstyleGet(player, mate.id)
-    for slot, itemId in pairs(mate.equip[mate.mjob]) do
-        if slot ~= STARTER_MARK then
-            if not synced or itemLevel(itemId) <= main or (type(slot) == 'number' and slot <= 3) then
-                outfit[slot] = itemId
-            elseif SQUAD_LS_SLOTS[slot] and looks[slot] == nil then
-                looks[slot] = itemId
-            end
-        end
-    end
+    local outfit, looks = require('modules/custom/lua/squad_equipment').projectSpawnGear(
+        mate.equip[mate.mjob], squadLockstyleGet(player, mate.id), main, synced,
+        itemLevel, SQUAD_LS_SLOTS, STARTER_MARK)
 
     local okFix, _, fixed = pcall(function() return squadOutfitFix(outfit) end)
     if okFix and fixed then
