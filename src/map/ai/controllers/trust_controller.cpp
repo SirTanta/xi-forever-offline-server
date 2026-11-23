@@ -136,6 +136,17 @@ auto CTrustController::Tick(timer::time_point tick) -> Task<void>
         PTrust->SetLocalVar("TRUST_HOLD_ENGINE", 1);
     }
 
+    // (Gambits Revamped / Squads Revamped: the same marker under the names their add-ons read)
+    if (PTrust->GetLocalVar("GOWN_GATE_ENGINE") == 0)
+    {
+        PTrust->SetLocalVar("GOWN_GATE_ENGINE", 1);
+    }
+
+    if (PTrust->GetLocalVar("SQUAD_GATE_ENGINE") == 0)
+    {
+        PTrust->SetLocalVar("SQUAD_GATE_ENGINE", 1);
+    }
+
     if (!PTrust->PMaster)
     {
         co_return;
@@ -755,14 +766,20 @@ auto CTrustController::OrderedTarget() -> CBattleEntity*
 // (trust_hold.h). Without TRUST_HOLD set, as on the stock server, this is always false and nothing changes.
 auto CTrustController::ScriptHolds(const uint32 bit) -> bool
 {
-    const uint32 mask = POwner->GetLocalVar("TRUST_HOLD");
+    // Gambits Revamped (GOWN_GATE) and Squads Revamped (SQUAD_GATE) hold a mate through these two names: one owner per mate, so
+    // either mask holds the bit and the sum of the counters moves when any of them renews. Only a squad mate (SQUAD_ID) is held
+    // through them, as before; TRUST_HOLD itself has no such condition.
+    const bool   squadMate = POwner->GetLocalVar("SQUAD_ID") != 0;
+    const uint32 legacy    = squadMate ? (POwner->GetLocalVar("GOWN_GATE") | POwner->GetLocalVar("SQUAD_GATE")) : 0;
+    const uint32 mask      = POwner->GetLocalVar("TRUST_HOLD") | legacy;
     if ((mask & bit) == 0)
     {
         return false;
     }
 
-    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(m_Tick.time_since_epoch()).count();
-    return m_ScriptHold.Active(mask, POwner->GetLocalVar("TRUST_HOLD_SEQ"), bit, nowMs);
+    const uint32 seq   = POwner->GetLocalVar("TRUST_HOLD_SEQ") + (squadMate ? POwner->GetLocalVar("GOWN_GATE_SEQ") + POwner->GetLocalVar("SQUAD_GATE_SEQ") : 0);
+    const auto   nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(m_Tick.time_since_epoch()).count();
+    return m_ScriptHold.Active(mask, seq, bit, nowMs);
 }
 
 // FFXI Offline squad: true once this mate's engage delay (local var SQUAD_ENGAGE_DELAY, ms) has passed for this monster
