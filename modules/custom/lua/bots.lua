@@ -2345,6 +2345,18 @@ local function spellRequest(player, text)
         end
     end
 
+    -- (v0.3.3, G6) a spell that only works on its caster (Warp, Escape, Reraise, Utsusemi) cannot be put on you: no "sure, warp coming" and a cast the
+    -- server refuses. A bot you named says so; a general request stays quiet like any request nobody can do.
+    if kind == 'self' and squad ~= nil and squad.requestsOn ~= nil and squad.requestsOn(player) then
+        if asked then
+            asked:timer(math.random(800, 1600), function(b)
+                chat(b, 4, spellName .. ' only works on myself')
+            end)
+        end
+
+        return true
+    end
+
     local caster, why = nil, nil
     for _, bot in ipairs(asked and { asked } or bots) do
         local ok, reason = requestCanCast(bot, spellId)
