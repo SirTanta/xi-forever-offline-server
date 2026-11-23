@@ -12956,6 +12956,13 @@ auto CLuaBaseEntity::hasRaiseTractorMenu() -> bool
 
 void CLuaBaseEntity::sendRaise(uint8 raiseLevel)
 {
+    // XI: Forever Offline: a KO'd squad mate has no Raise menu to answer: she is Raised at once (CTrustEntity::RaiseSquadMate)
+    if (m_PBaseEntity->objtype == TYPE_TRUST && IsSquadMate(m_PBaseEntity))
+    {
+        static_cast<CTrustEntity*>(m_PBaseEntity)->RaiseSquadMate(raiseLevel);
+        return;
+    }
+
     if (m_PBaseEntity->objtype != TYPE_PC)
     {
         ShowWarning("Invalid entity type calling function (%s).", m_PBaseEntity->getName());

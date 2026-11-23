@@ -27,7 +27,8 @@ spellObject.onMagicCastingCheck = function(caster, target, spell)
 end
 
 spellObject.onSpellCast = function(caster, target, spell)
-    if target:isPC() then
+    -- XI: Forever Offline: a KO'd squad mate (a Raisable body) is raised the same way
+    if target:isPC() or target:isTrust() then
         target:sendRaise(2)
     end
 
