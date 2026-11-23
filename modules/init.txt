@@ -77,6 +77,8 @@ phoenix/dynamis/lua/
 # Squad mates
 custom/cpp/squad.cpp
 custom/lua/squad.lua
+# Party chat commands (thin squad.cpp: the chat decisions are in this file; it needs the rebuilt map server)
+custom/lua/squad_logic.lua
 custom/lua/squad_space.lua
 custom/lua/squad_chain.lua
 # Gambits v2: the in-game Squad Rule Set editor's server side (!gsq, GambitsV2 addon); needs custom/lua/squad.lua above

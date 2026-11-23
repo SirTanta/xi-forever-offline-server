@@ -1390,34 +1390,6 @@ auto trySquadCast(CCharEntity* PChar, CTrustEntity* PTrust, const SpellID spellI
     return SpellCastResult::Busy;
 }
 
-void reportSpellResult(CCharEntity* PChar, CTrustEntity* PTrust, const std::string& spellName, const SpellCastResult result)
-{
-    const sol::optional<sol::table> xiTable = ::lua["xi"].get<sol::optional<sol::table>>();
-    if (!xiTable)
-    {
-        return;
-    }
-
-    const sol::optional<sol::table> squadTable = (*xiTable)["squad"].get<sol::optional<sol::table>>();
-    if (!squadTable)
-    {
-        return;
-    }
-
-    sol::protected_function handler = (*squadTable)["onSpellCommand"];
-    if (!handler.valid())
-    {
-        return;
-    }
-
-    const auto outcome = handler(CLuaBaseEntity(PChar), CLuaBaseEntity(PTrust), spellName, spellResultName(result));
-    if (!outcome.valid())
-    {
-        const sol::error err = outcome;
-        ShowError("[SQUAD] spell command handler failed: %s", err.what());
-    }
-}
-
 // Party chat is also handed to Lua (xi.squad.onPartyChat), where it goes to the squad-chat sidecar and comes back
 // as in-character lines in party chat. The message itself is never blocked or changed.
 void forwardPartyChat(CCharEntity* PChar, CBasicPacket& packet)
@@ -1496,12 +1468,6 @@ auto findAbilityByName(const std::string& name) -> CAbility*
     }
 
     return nullptr;
-}
-
-auto isTwoHourWord(const std::string& name) -> bool
-{
-    return name == "2hr" || name == "2_hr" || name == "2hour" || name == "2_hour" || name == "two_hour" || name == "twohour" ||
-           name == "1hr" || name == "1_hr" || name == "sp" || name == "sp1" || name == "sp_ability";
 }
 
 // (Gambits v2 U13) How many upgrades a player has in a merit, whatever job they have on now: the count the server's own
@@ -1615,34 +1581,6 @@ auto trySquadAbility(CCharEntity* PChar, CTrustEntity* PTrust, CAbility* PAbilit
     return controller->Ability(PTarget->entityId(), PAbility->getID()) ? SpellCastResult::Cast : SpellCastResult::Busy;
 }
 
-void reportAbilityResult(CCharEntity* PChar, CTrustEntity* PTrust, const std::string& abilityName, const SpellCastResult result, const uint16 abilityId)
-{
-    const sol::optional<sol::table> xiTable = ::lua["xi"].get<sol::optional<sol::table>>();
-    if (!xiTable)
-    {
-        return;
-    }
-
-    const sol::optional<sol::table> squadTable = (*xiTable)["squad"].get<sol::optional<sol::table>>();
-    if (!squadTable)
-    {
-        return;
-    }
-
-    sol::protected_function handler = (*squadTable)["onAbilityCommand"];
-    if (!handler.valid())
-    {
-        return;
-    }
-
-    const auto outcome = handler(CLuaBaseEntity(PChar), CLuaBaseEntity(PTrust), abilityName, spellResultName(result), abilityId);
-    if (!outcome.valid())
-    {
-        const sol::error err = outcome;
-        ShowError("[SQUAD] ability command handler failed: %s", err.what());
-    }
-}
-
 // Lua: SquadUseAbility(player, mate, abilityId) -> result name (used to try again while the mate is busy)
 auto squadUseAbility(CLuaBaseEntity* player, CLuaBaseEntity* mate, const uint16 abilityId) -> std::string
 {
@@ -1656,61 +1594,74 @@ auto squadUseAbility(CLuaBaseEntity* player, CLuaBaseEntity* mate, const uint16 
     return spellResultName(trySquadAbility(PChar, PTrust, ability::GetAbility(abilityId)));
 }
 
-// Party chat named a job ability (or "2hr"): the first mate who can uses it ("all" = everyone who can)
-void handleAbilityChat(CCharEntity* PChar, const std::vector<CTrustEntity*>& askedMates, const bool everyone, const std::string& name)
+// ---- Thin C++ step 1: the engine calls squad_logic.lua needs (stable signatures, no decisions) ----
+
+// Lua: SquadSpellIdByName(name) -> spell id | nil (the server's spell name table)
+auto squadSpellIdByName(const std::string& name) -> std::optional<uint16>
 {
-    const bool twoHour  = isTwoHourWord(name);
-    CAbility*  PNamed   = twoHour ? nullptr : findAbilityByName(name);
-    if (!twoHour && PNamed == nullptr)
-    {
-        return; // just chat
-    }
-
-    const auto rank = [](const SpellCastResult r)
-    {
-        return r == SpellCastResult::NotReady ? 4 : r == SpellCastResult::NoTarget ? 3 : r == SpellCastResult::Busy ? 2 : 1;
-    };
-
-    bool            anyUsed        = false;
-    SpellCastResult worstFailure   = SpellCastResult::Unknown;
-    CTrustEntity*   failureSpeaker = askedMates.front();
-    CAbility*       failureAbility = PNamed;
-
-    for (auto* PTrust : askedMates)
-    {
-        CAbility* PAbility = twoHour ? ability::GetTwoHourAbility(PTrust->GetMJob()) : PNamed;
-        if (PAbility == nullptr)
-        {
-            continue;
-        }
-
-        const auto result = trySquadAbility(PChar, PTrust, PAbility);
-        if (result == SpellCastResult::Cast || result == SpellCastResult::Busy)
-        {
-            // busy: Lua tries again for a few seconds, so this mate has taken the request
-            anyUsed = true;
-            reportAbilityResult(PChar, PTrust, PAbility->getName(), result, PAbility->getID());
-            if (!everyone)
-            {
-                return;
-            }
-        }
-        else if (rank(result) > rank(worstFailure) || failureAbility == nullptr)
-        {
-            worstFailure   = result;
-            failureSpeaker = PTrust;
-            failureAbility = PAbility;
-        }
-    }
-
-    if (!anyUsed && failureAbility != nullptr)
-    {
-        reportAbilityResult(PChar, failureSpeaker, failureAbility->getName(), worstFailure, failureAbility->getID());
-    }
+    const auto id = spell::lookupIdByName(name);
+    return id.has_value() ? std::optional<uint16>(static_cast<uint16>(id.value())) : std::nullopt;
 }
 
-// Typing a spell name in party chat (optionally "all" or a squad mate's name first) makes squad mates cast it.
-// The chat message itself is never blocked.
+// Lua: SquadAbilityIdByName(name) -> job ability id | nil (never a pet ability)
+auto squadAbilityIdByName(const std::string& name) -> std::optional<uint16>
+{
+    CAbility* PAbility = findAbilityByName(name);
+    return PAbility != nullptr ? std::optional<uint16>(PAbility->getID()) : std::nullopt;
+}
+
+// Lua: SquadAbilityName(abilityId) -> the ability's name | nil
+auto squadAbilityName(const uint16 abilityId) -> std::optional<std::string>
+{
+    CAbility* PAbility = ability::GetAbility(abilityId);
+    return PAbility != nullptr ? std::optional<std::string>(PAbility->getName()) : std::nullopt;
+}
+
+// Lua: SquadTwoHourAbilityId(mate) -> the two-hour ability of the mate's main job | nil
+auto squadTwoHourAbilityId(CLuaBaseEntity* mate) -> std::optional<uint16>
+{
+    auto* PTrust = toSquadMate(mate);
+    if (PTrust == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    CAbility* PAbility = ability::GetTwoHourAbility(PTrust->GetMJob());
+    return PAbility != nullptr ? std::optional<uint16>(PAbility->getID()) : std::nullopt;
+}
+
+// Lua: SquadCastSpell(player, mate, spellId, target | nil) -> result name (cast, unknown, notready, notarget, busy)
+// The check and the cast of a spell typed in party chat: beneficial spells go on the player (or on `target`), attack and
+// debuff spells on the enemy.
+auto squadCastSpell(CLuaBaseEntity* player, CLuaBaseEntity* mate, const uint16 spellId, CLuaBaseEntity* target) -> std::string
+{
+    auto* PChar  = player != nullptr ? dynamic_cast<CCharEntity*>(player->GetBaseEntity()) : nullptr;
+    auto* PTrust = toSquadMate(mate);
+    if (PChar == nullptr || PTrust == nullptr || PTrust->isDead())
+    {
+        return "busy";
+    }
+
+    auto* PNamed = target != nullptr ? dynamic_cast<CBattleEntity*>(target->GetBaseEntity()) : nullptr;
+    return spellResultName(trySquadCast(PChar, PTrust, static_cast<SpellID>(spellId), PNamed));
+}
+
+// Lua: SquadTryAbility(player, mate, abilityId) -> result name (cast, unknown, notready, notarget, busy)
+auto squadTryAbility(CLuaBaseEntity* player, CLuaBaseEntity* mate, const uint16 abilityId) -> std::string
+{
+    auto* PChar  = player != nullptr ? dynamic_cast<CCharEntity*>(player->GetBaseEntity()) : nullptr;
+    auto* PTrust = toSquadMate(mate);
+    if (PChar == nullptr || PTrust == nullptr || PTrust->isDead())
+    {
+        return "busy";
+    }
+
+    return spellResultName(trySquadAbility(PChar, PTrust, ability::GetAbility(abilityId)));
+}
+
+// Typing a spell or job ability in party chat (optionally "all" or a squad mate's name first) makes squad mates use it.
+// The chat message itself is never blocked. Thin layer: the packet is decoded here, everything else (clean-up, who is
+// asked, spell or ability, the order, the failure ranking, the reply lines) is xi.squad.onChatCommand in squad_logic.lua.
 void handleSpellChat(CCharEntity* PChar, CBasicPacket& packet)
 {
     if (PChar->PTrusts.empty())
@@ -1747,188 +1698,24 @@ void handleSpellChat(CCharEntity* PChar, CBasicPacket& packet)
         text = autotranslate::replaceBytes(text);
     }
 
-    // Brackets and colons are not part of a spell name ("{Utsusemi: Ichi}" -> "utsusemi ichi"); apostrophes disappear ("Mage's Ballad")
-    {
-        std::string cleaned;
-        for (const unsigned char c : text)
-        {
-            if (c == '\'')
-            {
-                continue;
-            }
-
-            const bool symbol = c == '{' || c == '}' || c == '[' || c == ']' || c == '(' || c == ')' || c == '<' || c == '>' || c == ':' || c == ';' || c == ',' || c == '"';
-            cleaned += symbol ? ' ' : static_cast<char>(c);
-        }
-        text = cleaned;
-    }
-
-    // lower case, without trailing punctuation, split into words
-    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c)
-                   { return static_cast<char>(std::tolower(c)); });
-    while (!text.empty() && (text.back() == '.' || text.back() == '!' || text.back() == '?' || text.back() == ' '))
-    {
-        text.pop_back();
-    }
-
-    std::vector<std::string> words;
-    std::istringstream       stream(text);
-    for (std::string word; stream >> word;)
-    {
-        words.emplace_back(word);
-    }
-
-    if (words.empty() || words.size() > 6)
+    const sol::optional<sol::table> xiTable    = ::lua["xi"].get<sol::optional<sol::table>>();
+    const sol::optional<sol::table> squadTable = xiTable ? (*xiTable)["squad"].get<sol::optional<sol::table>>() : sol::nullopt;
+    if (!squadTable)
     {
         return;
     }
 
-    // The squad mates that are out and alive
-    std::vector<CTrustEntity*> mates;
-    for (auto* PTrust : PChar->PTrusts)
-    {
-        if (PTrust != nullptr && !PTrust->isDead() && squadEntities.contains(PTrust->id))
-        {
-            mates.emplace_back(PTrust);
-        }
-    }
-
-    if (mates.empty())
+    sol::protected_function handler = (*squadTable)["onChatCommand"];
+    if (!handler.valid())
     {
         return;
     }
 
-    // Optional first word: "all" (everyone who can) or one squad mate's name
-    bool                       everyone   = false;
-    std::vector<CTrustEntity*> askedMates = mates;
-    if (words.size() > 1)
+    const auto outcome = handler(CLuaBaseEntity(PChar), text, hadAutoTranslate);
+    if (!outcome.valid())
     {
-        if (words[0] == "all")
-        {
-            everyone = true;
-            words.erase(words.begin());
-        }
-        else
-        {
-            for (auto* PTrust : mates)
-            {
-                std::string name = PTrust->packetName;
-                std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c)
-                               { return static_cast<char>(std::tolower(c)); });
-                if (name == words[0])
-                {
-                    askedMates = { PTrust };
-                    words.erase(words.begin());
-                    break;
-                }
-            }
-        }
-    }
-
-    const auto joinSpell = [](const std::vector<std::string>& list)
-    {
-        std::string out;
-        for (const auto& word : list)
-        {
-            out += out.empty() ? word : "_" + word;
-        }
-        return out;
-    };
-
-    std::string spellName = joinSpell(words);
-    auto        spellId   = spell::lookupIdByName(spellName);
-
-    // Optional target at the end: "cure momo", "cure on momo", "protect me": a party member (you, a squad mate, another
-    // player or bot in your party). Only used when the words before it are a spell and the whole text is not one.
-    CBattleEntity* PNamed = nullptr;
-    if (!spellId.has_value() && words.size() > 1)
-    {
-        const std::string last  = words.back();
-        CBattleEntity*    found = nullptr;
-        if (last == "me" || last == "myself")
-        {
-            found = PChar;
-        }
-        else
-        {
-            PChar->ForPartyWithTrusts([&](CBattleEntity* PMember)
-            {
-                if (found != nullptr || PMember == nullptr)
-                {
-                    return;
-                }
-
-                std::string name = PMember->packetName.empty() ? PMember->getName() : PMember->packetName;
-                std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c)
-                               { return static_cast<char>(std::tolower(c)); });
-                if (name == last)
-                {
-                    found = PMember;
-                }
-            });
-        }
-
-        if (found != nullptr)
-        {
-            std::vector<std::string> rest(words.begin(), words.end() - 1);
-            if (rest.size() > 1 && rest.back() == "on")
-            {
-                rest.pop_back();
-            }
-
-            const auto namedSpell = spell::lookupIdByName(joinSpell(rest));
-            if (namedSpell.has_value())
-            {
-                spellName = joinSpell(rest);
-                spellId   = namedSpell;
-                PNamed    = found;
-            }
-        }
-    }
-    if (hadAutoTranslate)
-    {
-        ShowInfo("[SQUAD] auto-translate in party chat read as '%s' -> %s", spellName.c_str(), spellId.has_value() ? "spell found" : "no spell with that name");
-    }
-
-    if (!spellId.has_value())
-    {
-        handleAbilityChat(PChar, askedMates, everyone, spellName);
-        return;
-    }
-
-    // Ask in order. One cast is enough unless "all" was said. If nobody can, report the most useful reason
-    // (not ready beats no target beats busy beats "I do not know that spell").
-    const auto rank = [](const SpellCastResult r)
-    {
-        return r == SpellCastResult::NotReady ? 4 : r == SpellCastResult::NoTarget ? 3 : r == SpellCastResult::Busy ? 2 : 1;
-    };
-
-    bool            anyCast        = false;
-    SpellCastResult worstFailure   = SpellCastResult::Unknown;
-    CTrustEntity*   failureSpeaker = askedMates.front();
-
-    for (auto* PTrust : askedMates)
-    {
-        const auto result = trySquadCast(PChar, PTrust, spellId.value(), PNamed);
-        if (result == SpellCastResult::Cast)
-        {
-            anyCast = true;
-            reportSpellResult(PChar, PTrust, spellName, result);
-            if (!everyone)
-            {
-                return;
-            }
-        }
-        else if (rank(result) > rank(worstFailure))
-        {
-            worstFailure   = result;
-            failureSpeaker = PTrust;
-        }
-    }
-
-    if (!anyCast)
-    {
-        reportSpellResult(PChar, failureSpeaker, spellName, worstFailure);
+        const sol::error err = outcome;
+        ShowError("[SQUAD] chat command handler failed: %s", err.what());
     }
 }
 
@@ -2131,6 +1918,12 @@ class SquadModule : public CPPModule
 
         ::lua.set_function("SpawnSquadMate", spawnSquadMate);
         ::lua.set_function("SquadUseAbility", squadUseAbility);
+        ::lua.set_function("SquadSpellIdByName", squadSpellIdByName);       // thin C++ step 1 (squad_logic.lua)
+        ::lua.set_function("SquadAbilityIdByName", squadAbilityIdByName);
+        ::lua.set_function("SquadAbilityName", squadAbilityName);
+        ::lua.set_function("SquadTwoHourAbilityId", squadTwoHourAbilityId);
+        ::lua.set_function("SquadCastSpell", squadCastSpell);
+        ::lua.set_function("SquadTryAbility", squadTryAbility);
         ::lua.set_function("GetSquad", getSquad);
         ::lua.set_function("SaveSquadMate", saveSquadMate);
         ::lua.set_function("SetSquadJob", setSquadJob);
