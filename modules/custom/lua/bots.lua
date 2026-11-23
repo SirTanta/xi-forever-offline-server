@@ -2308,6 +2308,12 @@ local function spellRequest(player, text)
         target = people[rest]
     end
 
+    -- (v0.3.3, G1/G16) a squad mate took this request (or the same one is on its way): one answerer, one cast
+    local squad = xi.squad
+    if squad ~= nil and squad.requestTaken ~= nil and squad.requestTaken(player, spellId, target) then
+        return true
+    end
+
     local spellName = table.concat(words, ' ', first, last)
     local caster, why = nil, nil
     for _, bot in ipairs(asked and { asked } or bots) do
@@ -2333,6 +2339,10 @@ local function spellRequest(player, text)
         return true
     end
 
+    if squad ~= nil and squad.requestClaim ~= nil then
+        squad.requestClaim(player, spellId, target)
+    end
+
     local st = state[caster:getID()] or {}
     state[caster:getID()] = st
     st.partyWait = os.time() + 6 -- (its own party play waits for this cast)
@@ -2346,6 +2356,11 @@ local function spellRequest(player, text)
 end
 
 xi.bots.partyOrder = function(player, text)
+    -- (v0.3.3, G1) a line a squad mate already took is not answered a second time, by a spell request or by chatter
+    if xi.squad ~= nil and xi.squad.lineTaken ~= nil and xi.squad.lineTaken(player, text) then
+        return
+    end
+
     if spellRequest(player, text) then
         return
     end

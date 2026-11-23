@@ -281,9 +281,49 @@ local function firstFallen(player)
     return nil
 end
 
+-----------------------------------
+-- G1: one answerer between the squad mates and the bot players
+-- The mates (squad.cpp, listed first in init.txt) and the bots (bots.cpp) read the same party chat line and used to know nothing of each
+-- other: with a mate and a bot that both could Sneak you got two Sneaks and two "On it". A request a mate took is now marked here, and the
+-- bots' own request code asks before it acts (bots.lua: xi.squad.requestTaken, xi.squad.lineTaken). If no mate can, the bots keep the line.
+-----------------------------------
+R.LINE_SECONDS = 6
+R.lines = R.lines or {} -- [player id] = { text = 'normalised', untilT = time }
+
+local function norm(text)
+    return (tostring(text or ''):lower():gsub('[^%w]', ''))
+end
+
+function R.markLine(player, text)
+    R.lines[idOf(player)] = { text = norm(text), untilT = now() + R.LINE_SECONDS }
+end
+
+function R.lineTaken(player, text)
+    if not R.on(player) then
+        return false
+    end
+
+    local line = R.lines[idOf(player)]
+    return line ~= nil and line.untilT > now() and line.text == norm(text)
+end
+
+xi.squad.lineTaken = function(player, text)
+    return R.lineTaken(player, text)
+end
+
+xi.squad.requestTaken = function(player, spellId, target)
+    return R.on(player) and R.taken(player, spellId, target)
+end
+
+xi.squad.requestClaim = function(player, spellId, target)
+    if R.on(player) then
+        R.claim(player, spellId, target)
+    end
+end
+
 -- squad_logic.lua hands a spell request over: the mates it asks (in order), "all", the spell, the named target (or nil = you).
 -- Returns true when the request was answered here, false to let squad_logic.lua run the old loop.
-function R.cast(player, askedMates, everyone, spellId, spellName, named)
+function R.cast(player, askedMates, everyone, spellId, spellName, named, text)
     if not R.on(player) then
         return false
     end
@@ -299,6 +339,7 @@ function R.cast(player, askedMates, everyone, spellId, spellName, named)
         named = firstFallen(player)
         if named == nil then
             say(player, askedMates[1], 'noraise', {})
+            R.markLine(player, text)
             return true
         end
     end
@@ -316,11 +357,13 @@ function R.cast(player, askedMates, everyone, spellId, spellName, named)
     -- "On it") or answered with the misleading "nothing to cast on". One mate says what is true, once.
     if kind == 'self' and not (named ~= nil and #askedMates == 1 and askedMates[1] == named) then
         say(player, askedMates[1], 'selfonly', { spell = pretty(spellName) })
+        R.markLine(player, text)
         return true
     end
 
     if kind ~= 'enemy' and R.taken(player, spellId, target) then
         print(string.format('[squad_requests] %s on %s is taken (a cast is on its way): the repeated line is ignored', spellName, tostring(target:getName())))
+        R.markLine(player, text)
         return true
     end
 
@@ -334,6 +377,7 @@ function R.cast(player, askedMates, everyone, spellId, spellName, named)
                 R.claim(player, spellId, target)
             end
 
+            R.markLine(player, text)
             R.acknowledge(player, mate, spellName, spellId, target)
             if not everyone then
                 return true
