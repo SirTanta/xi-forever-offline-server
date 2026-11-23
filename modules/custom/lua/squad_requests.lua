@@ -878,10 +878,10 @@ local function tierList(fam, tier)
     return out
 end
 
--- one try at one unit: the mates in order, every tier best first; 'cast' (and who, and which spell), 'busy', or 'failed' (and why)
-local function tryUnit(req, unit)
+-- the mates of `list` in order, every tier best first; 'cast' (and who, and which spell), 'busy', or 'failed' (and why, and who)
+local function tryList(req, unit, list)
     local sawBusy, worst, worstMate = false, 'unknown', nil
-    for _, mate in ipairs(ordered(req, unit)) do
+    for _, mate in ipairs(list) do
         local mateWorst = 'unknown'
         for _, tier in ipairs(unit.tiers) do
             local result = SquadCastSpell(req.player, mate, tier.id, unit.named)
@@ -910,6 +910,32 @@ local function tryUnit(req, unit)
     return 'failed', worst, worstMate
 end
 
+-----------------------------------
+-- G12 (extra): "sneak and invis" is one request for one caster, one after the other
+-- Two lines, or one line with two words, were two separate casts that could land on two different mates, each with its own line. With the extras
+-- on, a request for several spells on one person goes to ONE mate: the first spell is given to the best caster, and the next ones wait for her
+-- (she is casting) instead of going to somebody else, unless she cannot cast it at all. One voice for the whole request.
+-----------------------------------
+local function tryUnit(req, unit)
+    if req.sticky and req.speaker ~= nil then
+        local result, a, b = tryList(req, unit, { req.speaker })
+        if result == 'cast' or result == 'busy' then
+            return result, a, b
+        end
+
+        local others = {}
+        for _, mate in ipairs(ordered(req, unit)) do
+            if mate ~= req.speaker then
+                others[#others + 1] = mate
+            end
+        end
+
+        return tryList(req, unit, others)
+    end
+
+    return tryList(req, unit, ordered(req, unit))
+end
+
 local function step(req)
     local waiting = false
     for _, unit in ipairs(req.units) do
@@ -919,6 +945,7 @@ local function step(req)
             else
                 local result, a, b = tryUnit(req, unit)
                 if result == 'cast' then
+                    req.speaker = req.speaker or a
                     unit.state, unit.id, unit.spellName = 'casting', b.id, b.name
                     R.claim(req.player, unit.id, unit.target)
                     R.markLine(req.player, req.text)
@@ -1029,6 +1056,19 @@ function R.run(player, mates, intent, text, d)
             end
         end
     end
+
+    -- several spells for one person: one caster does them one after the other
+    local people = {}
+    for _, unit in ipairs(req.units) do
+        people[idOf(unit.target)] = true
+    end
+
+    local count = 0
+    for _ in pairs(people) do
+        count = count + 1
+    end
+
+    req.sticky = #req.units > 1 and count == 1
 
     if #req.units == 0 then
         if req.said ~= nil and not intent.implicit then
