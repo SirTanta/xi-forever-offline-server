@@ -19232,7 +19232,8 @@ void CLuaBaseEntity::setCrystalElement(ELEMENT crystalElement)
 
 auto CLuaBaseEntity::getBehavior() -> xi::Behavior
 {
-    if (m_PBaseEntity->objtype != TYPE_MOB)
+    // XI: Forever Offline: a squad mate is a CTrustEntity (a CMobEntity); her Raisable bit is what the Raise spells' onMagicCastingCheck reads. A retail trust stays refused.
+    if (m_PBaseEntity->objtype != TYPE_MOB && !(m_PBaseEntity->objtype == TYPE_TRUST && IsSquadMate(m_PBaseEntity)))
     {
         ShowWarning("Attempting to get behavior for invalid entity type (%s).", m_PBaseEntity->getName());
         return xi::Behavior::None;
