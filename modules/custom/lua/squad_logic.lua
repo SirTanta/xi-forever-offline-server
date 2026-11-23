@@ -223,6 +223,17 @@ function L.onChat(player, text, hadAutoTranslate)
         return
     end
 
+    -- (v0.3.3) squad_requests.lua asks, claims and answers a spell request when it is loaded and its fixes are on; true = done
+    local req = rawget(_G, 'SQUAD_REQ')
+    if req ~= nil and req.cast ~= nil then
+        local ok, handled = pcall(req.cast, player, askedMates, everyone, spellId, spellName, named)
+        if ok and handled then
+            return
+        elseif not ok then
+            print('[squad_logic] squad_requests failed: ' .. tostring(handled))
+        end
+    end
+
     -- Ask in order. One cast is enough unless "all" was said. If nobody can, report the most useful reason
     local anyCast, worstFailure, failureSpeaker = false, 'unknown', askedMates[1]
     for _, mate in ipairs(askedMates) do

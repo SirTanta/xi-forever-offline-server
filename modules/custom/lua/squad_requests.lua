@@ -71,6 +71,138 @@ function R.mayAnswer(player, mate)
 end
 
 -----------------------------------
+-- the request: ask the mates, claim it, answer it
+-----------------------------------
+local function now()
+    return os.time()
+end
+
+local function idOf(entity)
+    local ok, id = pcall(function()
+        return entity:getID()
+    end)
+
+    return ok and id or 0
+end
+
+-- the failure that explains most: not ready beats no target beats busy beats "I do not know that" (the same order as squad_logic.lua)
+local RANK = { notready = 4, notarget = 3, busy = 2 }
+
+local function rank(result)
+    return RANK[result] or 1
+end
+
+local function report(player, mate, spellName, result)
+    local handler = xi.squad.onSpellCommand
+    if type(handler) == 'function' then
+        local ok, err = pcall(handler, player, mate, spellName, result)
+        if not ok then
+            print('[squad_requests] onSpellCommand failed: ' .. tostring(err))
+        end
+    end
+end
+
+-- what the spell can be cast on: 'enemy' | 'dead' | 'party' | 'self' | '' (the binding of the rebuilt squad.cpp is missing: leave the line to squad_logic.lua)
+local function kindOf(spellId)
+    local f = rawget(_G, 'SquadSpellKind')
+    if type(f) ~= 'function' then
+        return ''
+    end
+
+    local ok, kind = pcall(f, spellId)
+    return ok and kind or ''
+end
+
+-----------------------------------
+-- G16: typing the same line again does not cast again
+-- A cast that was accepted keeps (spell, person) taken while it is being cast and a moment after. A repeat of the line
+-- finds it taken and is ignored; before, a mate that was mid-cast answered "busy" and the NEXT mate cast the same spell on the same person. Attack spells are not claimed (casting "stone" again is a new nuke, and the recast already limits it).
+-----------------------------------
+R.CLAIM_PAD = 2 -- seconds after the cast time
+R.claims = R.claims or {} -- [player id] = { ['spell:target'] = until }
+
+-- the cast time of a spell in seconds (the server's spell table: milliseconds); 5 when it cannot be read
+local function castSeconds(spellId)
+    local ok, seconds = pcall(function()
+        local ms = GetSpell(spellId):getCastTime()
+        return ms > 100 and ms / 1000 or ms
+    end)
+
+    if ok and type(seconds) == 'number' and seconds > 0 then
+        return math.min(seconds, 30)
+    end
+
+    return 5
+end
+
+local function claimKey(spellId, target)
+    return tostring(spellId) .. ':' .. tostring(idOf(target))
+end
+
+function R.taken(player, spellId, target)
+    local mine = R.claims[idOf(player)]
+    local untilT = mine ~= nil and mine[claimKey(spellId, target)] or nil
+    return untilT ~= nil and untilT > now()
+end
+
+function R.claim(player, spellId, target)
+    local key = idOf(player)
+    local mine = R.claims[key] or {}
+    R.claims[key] = mine
+    for k, untilT in pairs(mine) do
+        if untilT <= now() then
+            mine[k] = nil
+        end
+    end
+
+    mine[claimKey(spellId, target)] = now() + castSeconds(spellId) + R.CLAIM_PAD
+end
+
+-- squad_logic.lua hands a spell request over: the mates it asks (in order), "all", the spell, the named target (or nil = you).
+-- Returns true when the request was answered here, false to let squad_logic.lua run the old loop.
+function R.cast(player, askedMates, everyone, spellId, spellName, named)
+    if not R.on(player) then
+        return false
+    end
+
+    local kind = kindOf(spellId)
+    if kind == '' then
+        return false
+    end
+
+    local target = named or player
+    if kind ~= 'enemy' and R.taken(player, spellId, target) then
+        print(string.format('[squad_requests] %s on %s is taken (a cast is on its way): the repeated line is ignored', spellName, tostring(target:getName())))
+        return true
+    end
+
+    -- ask in order; one cast is enough unless "all" was said; nobody can: the most useful reason
+    local anyCast, worstFailure, failureSpeaker = false, 'unknown', askedMates[1]
+    for _, mate in ipairs(askedMates) do
+        local result = SquadCastSpell(player, mate, spellId, named)
+        if result == 'cast' then
+            anyCast = true
+            if kind ~= 'enemy' then
+                R.claim(player, spellId, target)
+            end
+
+            report(player, mate, spellName, result)
+            if not everyone then
+                return true
+            end
+        elseif rank(result) > rank(worstFailure) then
+            worstFailure, failureSpeaker = result, mate
+        end
+    end
+
+    if not anyCast then
+        report(player, failureSpeaker, spellName, worstFailure)
+    end
+
+    return true
+end
+
+-----------------------------------
 -- !sqreq
 -----------------------------------
 local function say(player, text)
