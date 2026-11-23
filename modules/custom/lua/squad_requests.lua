@@ -114,6 +114,11 @@ R.LINES.noraise = {
     'You are standing and so is everyone else, no Raise needed.',
 }
 
+R.LINES.failed = {
+    'That {spell} did not land.',
+    '{spell} fizzled, it did not take. Ask again.',
+}
+
 -- 'cure_iv' -> 'Cure IV'
 local function pretty(name)
     local text = tostring(name):gsub('_', ' ')
@@ -201,6 +206,65 @@ function R.claim(player, spellId, target)
     mine[claimKey(spellId, target)] = now() + castSeconds(spellId) + R.CLAIM_PAD
 end
 
+-----------------------------------
+-- G5: the acknowledgement comes when the cast landed, and a cast that did not land is said so
+-- Before, "On it: Sneak!" came the moment the engine accepted the cast; an interrupt, a mate that died or an out of range target ended in
+-- silence after a cheerful line. For the spells that leave an effect on the target (Sneak, Invisible, Haste, Protect, ...) the mate now
+-- answers when the effect is on, after the cast time. Not landed after that: one line saying so, and the claim of G16 is let go so asking again
+-- works. Spells without a visible effect (Cure, Raise, attacks) are answered at accept, as before: nothing can be read to say more.
+-----------------------------------
+R.EFFECT = R.EFFECT or {
+    sneak = 'SNEAK', invisible = 'INVISIBLE', deodorize = 'DEODORIZE', haste = 'HASTE', protect = 'PROTECT', shell = 'SHELL', blink = 'BLINK',
+    stoneskin = 'STONESKIN', phalanx = 'PHALANX', regen = 'REGEN', refresh = 'REFRESH', aquaveil = 'AQUAVEIL',
+}
+R.LAND_TRIES = 3 -- looks at the target: one second after the cast time, then every two seconds
+
+local function effectOf(spellName)
+    local base = tostring(spellName):gsub('_[ivx]+$', '')
+    local name = R.EFFECT[base]
+    return name ~= nil and xi.effect ~= nil and xi.effect[name] or nil
+end
+
+function R.release(player, spellId, target)
+    local mine = R.claims[idOf(player)]
+    if mine ~= nil then
+        mine[claimKey(spellId, target)] = nil
+    end
+end
+
+function R.acknowledge(player, mate, spellName, spellId, target)
+    local effect = effectOf(spellName)
+    if effect == nil then
+        report(player, mate, spellName, 'cast')
+        return
+    end
+
+    local tries = 0
+    local function look()
+        tries = tries + 1
+        local ok, landed = pcall(function()
+            return target:hasStatusEffect(effect)
+        end)
+
+        if ok and landed then
+            report(player, mate, spellName, 'cast')
+        elseif tries < R.LAND_TRIES then
+            mate:timer(2000, look)
+        else
+            R.release(player, spellId, target)
+            say(player, mate, 'failed', { spell = pretty(spellName) })
+        end
+    end
+
+    local ok = pcall(function()
+        mate:timer(math.floor((castSeconds(spellId) + 1) * 1000), look)
+    end)
+
+    if not ok then
+        report(player, mate, spellName, 'cast') -- no timer to wait with: answer now, as before
+    end
+end
+
 -- G9: the first person of your party who is knocked out, in the same zone (a squad mate cannot be raised: it is called again)
 local function firstFallen(player)
     local ok, party = pcall(function()
@@ -270,7 +334,7 @@ function R.cast(player, askedMates, everyone, spellId, spellName, named)
                 R.claim(player, spellId, target)
             end
 
-            report(player, mate, spellName, result)
+            R.acknowledge(player, mate, spellName, spellId, target)
             if not everyone then
                 return true
             end
@@ -289,14 +353,14 @@ end
 -----------------------------------
 -- !sqreq
 -----------------------------------
-local function say(player, text)
+local function tell(player, text)
     pcall(function()
         player:printToPlayer(text)
     end)
 end
 
 function R.status(player)
-    say(player, string.format('squad requests: fixes %s, extras %s', R.on(player) and 'ON' or 'OFF (!sqreq on)', R.more(player) and 'ON' or 'off (!sqreq more on)'))
+    tell(player, string.format('squad requests: fixes %s, extras %s', R.on(player) and 'ON' or 'OFF (!sqreq on)', R.more(player) and 'ON' or 'off (!sqreq more on)'))
 end
 
 function R.command(player, a, b)
@@ -306,7 +370,7 @@ function R.command(player, a, b)
     elseif a == 'more' and (b == 'on' or b == 'off') then
         player:setCharVar('SQREQ_MORE', b == 'on' and 1 or 0)
     elseif a ~= '' and a ~= 'status' then
-        say(player, '!sqreq | !sqreq off | !sqreq on | !sqreq more on | !sqreq more off')
+        tell(player, '!sqreq | !sqreq off | !sqreq on | !sqreq more on | !sqreq more off')
     end
 
     R.status(player)
