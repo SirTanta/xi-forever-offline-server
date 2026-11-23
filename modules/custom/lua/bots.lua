@@ -2253,7 +2253,13 @@ end
 
 local function spellRequest(player, text)
     local words = {}
-    for w in string.gmatch(string.lower(text or ''), "[%a']+") do
+    -- (v0.3.3, G10) apostrophes disappear, the way the squad mates read a line ("Mage's Ballad" is MAGES_BALLAD; before it was the key MAGE'S_BALLAD)
+    local lowered, wordPattern = string.lower(text or ''), "[%a']+"
+    if xi.squad ~= nil and xi.squad.requestsOn ~= nil and xi.squad.requestsOn(player) then
+        lowered, wordPattern = lowered:gsub("'", ''), '%a+'
+    end
+
+    for w in string.gmatch(lowered, wordPattern) do
         if not REQUEST_FILLER[w] then
             words[#words + 1] = w
         end

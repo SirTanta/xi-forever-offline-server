@@ -311,6 +311,10 @@ xi.squad.lineTaken = function(player, text)
     return R.lineTaken(player, text)
 end
 
+xi.squad.requestsOn = function(player)
+    return R.on(player)
+end
+
 xi.squad.requestTaken = function(player, spellId, target)
     return R.on(player) and R.taken(player, spellId, target)
 end
