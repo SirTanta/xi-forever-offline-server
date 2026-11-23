@@ -2385,7 +2385,7 @@ auto canEquipItemOnAnyJob(CCharEntity* PChar, const CItemEquipment* PItem) -> bo
 
     for (uint8 i = 1; i < MAX_JOBTYPE; i++)
     {
-        if (PItem->getJobs() & (1 << (i - 1)) && PItem->getReqLvl() <= PChar->jobs.job[i])
+        if (PItem->getJobs() & (1 << (i - 1)) && itemutils::effectiveReqLevel(PChar, PItem) <= PChar->jobs.job[i])
         {
             // TODO: Check for Su level for the player's job, and apply to the condition.
             return true;

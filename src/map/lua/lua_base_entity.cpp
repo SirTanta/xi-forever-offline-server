@@ -5535,7 +5535,8 @@ auto CLuaBaseEntity::canEquipItem(uint16 itemID, const sol::object& chkLevel) ->
     {
         return false;
     }
-    if (checkLevel && (PItem->getReqLvl() > PChar->GetMLevel()))
+    // XI: Forever Offline (gear sync): an item above map.GEAR_SYNC_LEVEL counts as that level
+    if (checkLevel && (itemutils::effectiveReqLevel(PChar, PItem) > PChar->GetMLevel()))
     {
         return false;
     }
@@ -15921,7 +15922,8 @@ auto CLuaBaseEntity::getAmmoDmg() -> uint16
         return 0;
     }
 
-    return weapon->getDamage();
+    // XI: Forever Offline (gear sync): the stock damage when map.GEAR_SYNC_LEVEL is 0
+    return battleutils::GetSyncedWeaponDamage(PBattle, weapon);
 }
 
 /************************************************************************
